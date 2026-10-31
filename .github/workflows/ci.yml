@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ['3.11', '3.14']
+    env:
+      PYTHONUTF8: '1'
+      HERMES_HOME: ${{ github.workspace }}/.cache/hermes-workflows-ci
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Standard-library suite
+        run: python -m unittest discover -s tests -v
+      - name: Install optional adapter test dependencies
+        run: python -m pip install -r requirements-ci.txt
+      - name: Suite including FastAPI and YAML adapters
+        run: python -m unittest discover -s tests -v
+      - name: Lint
+        run: python -m ruff check hermes-workflows-py/hermes_workflows tests scripts
+      - name: Verify committed assets
+        run: python scripts/verify_assets.py
+
+  frontend:
+    name: Frontend / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.11'
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Check dashboard loader
+        run: node --test tests/dashboard_entry.test.cjs
+      - name: Typecheck, test and build both frontends
+        run: npm run validate --prefix frontend
+      - name: Verify rebuilt assets
+        run: python scripts/verify_assets.py
+      - name: Require reproducible committed bundles
+        run: git diff --exit-code -- hermes-workflows-py/dashboard hermes-workflows-py/desktop

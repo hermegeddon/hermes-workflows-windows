@@ -1,0 +1,5 @@
+# Development checks only; the plugin itself has no pip dependencies.
+fastapi==0.162.0
+httpx==0.28.1
+PyYAML==6.0.3
+ruff==0.17.3
