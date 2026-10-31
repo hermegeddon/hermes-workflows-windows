@@ -1,0 +1,15 @@
+{
+  "id": "agent-summary",
+  "name": "Parameterized Hermes summary",
+  "version": 1,
+  "scope": {"type": "global"},
+  "trigger": {"type": "manual"},
+  "defaults": {"profile": "default", "max_retries": 1},
+  "params": [{"name": "topic", "type": "text", "label": "Topic to summarize"}],
+  "nodes": [
+    {"id": "brief", "type": "prompt", "prompt": "Keep the summary under 150 words. State uncertainty clearly."},
+    {"id": "summarize", "type": "agent_task", "prompt": "Summarize {{params.topic}}.", "timeout_seconds": 120},
+    {"id": "finish", "type": "finish", "outcome": "success"}
+  ],
+  "edges": [{"from": "brief", "to": "summarize"}, {"from": "summarize", "to": "finish"}]
+}

@@ -1,0 +1,24 @@
+.hwp-desktop {
+  --color-foreground: var(--ui-text-primary, #e6edf3);
+  --color-muted-foreground: var(--ui-text-secondary, #9a9a9a);
+  --color-text: var(--ui-text-primary, #e6edf3);
+  --color-text-muted: var(--ui-text-secondary, #9a9a9a);
+  --color-border: var(--border, #344348);
+  --color-input: var(--border, #344348);
+  --color-secondary: var(--secondary, #203337);
+  --color-secondary-foreground: var(--ui-text-primary, #e6edf3);
+  --color-primary: var(--primary, #4a90e2);
+  --color-primary-foreground: var(--primary-foreground, #fff);
+  --color-card: var(--background, #142225);
+  --color-card-foreground: var(--ui-text-primary, #e6edf3);
+  --color-ring: var(--ring, #70caca);
+  --color-destructive: #f08090;
+  height: 100%; min-height: 0; color: var(--color-foreground);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+.hwp-desktop-scope { padding: .25rem .75rem; margin: 0; font-size: .75rem; opacity: .75; }
+.hwp-desktop .hw-root { margin: 0; }
+.hwp-desktop .hw-review { flex: none; border-bottom: 1px solid var(--color-border); }
+.hwp-desktop .hw-review h2 { font-size: 1rem; margin: 0; }
+.hwp-desktop .hw-review textarea { max-width: 44rem; }
+.hwp-desktop .hw-review .hw-actions { margin-top: .5rem; }

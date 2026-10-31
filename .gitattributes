@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Keep integrity-checked assets byte-for-byte identical across Windows clones.
+hermes-workflows-py/dashboard/dist/** -text whitespace=cr-at-eol
+hermes-workflows-py/dashboard/compat/** -text whitespace=cr-at-eol
+hermes-workflows-py/dashboard/entry.js -text whitespace=cr-at-eol
+hermes-workflows-py/dashboard/style.css -text whitespace=cr-at-eol
+hermes-workflows-py/dashboard/manifest.json -text whitespace=cr-at-eol
+hermes-workflows-py/desktop/plugin.js -text whitespace=cr-at-eol

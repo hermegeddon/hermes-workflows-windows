@@ -1,0 +1,21 @@
+{
+  "id": "plugin-review-smoke",
+  "name": "Plugin installation smoke test",
+  "version": 1,
+  "scope": {"type": "global"},
+  "trigger": {"type": "manual"},
+  "nodes": [
+    {
+      "id": "review",
+      "type": "human_review",
+      "title": "Confirm the gateway can read and approve this run",
+      "options": ["approved", "rejected"]
+    },
+    {"id": "success", "type": "finish", "outcome": "success"},
+    {"id": "failure", "type": "finish", "outcome": "failure"}
+  ],
+  "edges": [
+    {"from": "review", "to": "success", "condition": {"type": "review_status", "equals": "approved"}},
+    {"from": "review", "to": "failure", "condition": {"type": "review_status", "equals": "rejected"}}
+  ]
+}

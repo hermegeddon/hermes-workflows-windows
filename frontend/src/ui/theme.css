@@ -1,0 +1,1260 @@
+/*
+ * Plugin UI styling, built on the host's design-system theme tokens
+ * (--color-*, --radius-*, --font-sans). Using the host tokens means the plugin
+ * inherits the active Hermes theme and follows theme switches, rather than
+ * shipping its own palette. All classes are `hw-`-prefixed to avoid colliding
+ * with host styles. Fallback values keep the plugin legible if a token is
+ * missing.
+ */
+
+/* --- Base form-control legibility -------------------------------------------
+ * Every native control inside the plugin root (`.hw-root`) inherits the host
+ * theme tokens, so a bare <input>/<textarea>/<select>/<button> reads correctly
+ * without each call site opting into a `hw-` class. The selector has zero
+ * specificity (`:where`), so explicit `hw-` classes and inline styles stay
+ * authoritative, and the react-flow canvas controls are excluded so the zoom
+ * buttons keep their own look. */
+:where(.hw-root) :where(input:not([type="checkbox"]):not([type="radio"]), textarea, select) {
+  font: inherit;
+  font-family: var(--font-sans, inherit);
+  box-sizing: border-box;
+  padding: 6px 9px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--color-input, var(--color-border, #2a2a2a));
+  background: var(--background, #1e1e1e);
+  color: var(--color-foreground, #ededed);
+  line-height: 1.3;
+}
+:where(.hw-root) :where(input:not([type="checkbox"]):not([type="radio"]), textarea, select):focus {
+  outline: 2px solid var(--color-ring, #4a90e2);
+  outline-offset: 0;
+  border-color: transparent;
+}
+:where(.hw-root) :where(textarea) {
+  resize: vertical;
+  min-height: 2.4em;
+}
+/* Tall content textarea (node prompt / script command). */
+.hw-textarea--tall {
+  min-height: 400px;
+}
+:where(.hw-root) :where(option) {
+  background: var(--color-card, #1e1e1e);
+  color: var(--color-foreground, #ededed);
+}
+:where(.hw-root) :where(button:not(.react-flow__controls-button)) {
+  font: inherit;
+  font-family: var(--font-sans, inherit);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--color-border, #2a2a2a);
+  background: var(--color-secondary, #2a2a2a);
+  color: var(--color-secondary-foreground, #f2f2f2);
+  cursor: pointer;
+  line-height: 1.2;
+  transition: filter 0.12s ease, background 0.12s ease;
+}
+:where(.hw-root) :where(button:not(.react-flow__controls-button)):hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+:where(.hw-root) :where(button:not(.react-flow__controls-button)):disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.hw-btn {
+  font: inherit;
+  font-family: var(--font-sans, inherit);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--color-border, #2a2a2a);
+  background: var(--color-secondary, #2a2a2a);
+  color: var(--color-secondary-foreground, #f2f2f2);
+  cursor: pointer;
+  line-height: 1.2;
+  transition: filter 0.12s ease, background 0.12s ease;
+}
+.hw-btn:hover {
+  filter: brightness(1.12);
+}
+.hw-btn:focus-visible {
+  outline: 2px solid var(--color-ring, #4a90e2);
+  outline-offset: 1px;
+}
+.hw-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.hw-btn--primary {
+  background: var(--color-primary, #4a90e2);
+  color: var(--color-primary-foreground, #fff);
+  border-color: transparent;
+}
+.hw-btn--danger {
+  color: var(--color-destructive, #d35);
+  border-color: color-mix(in srgb, var(--color-destructive, #d35) 40%, transparent);
+}
+.hw-btn--sm {
+  padding: 3px 9px;
+  font-size: 0.85em;
+}
+
+.hw-input,
+.hw-select {
+  font: inherit;
+  font-family: var(--font-sans, inherit);
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 9px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--color-input, var(--color-border, #2a2a2a));
+  background: var(--background, #1e1e1e);
+  /* NB: the host's `--foreground` token is transparent by design; the visible
+     text colour is `--color-foreground`. Using --foreground here made input
+     text invisible. */
+  color: var(--color-foreground, #ededed);
+  line-height: 1.3;
+}
+.hw-input:focus,
+.hw-select:focus {
+  outline: 2px solid var(--color-ring, #4a90e2);
+  outline-offset: 0;
+  border-color: transparent;
+}
+
+.hw-label {
+  font-size: 0.8em;
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+
+.hw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hw-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(1px);
+}
+
+/* Modal is a fixed-height flex column: header and actions pin, only the body
+   scrolls. The body owns its own padding (not the modal), so the scrollbar sits
+   at the modal edge and form-control focus rings aren't clipped by the
+   scroll container's overflow. */
+.hw-modal {
+  display: flex;
+  flex-direction: column;
+  min-width: 340px;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow: hidden;
+  background: var(--color-card, var(--background, #1e1e1e));
+  color: var(--color-card-foreground, var(--color-foreground, #ededed));
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: var(--radius-lg, 10px);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+}
+
+.hw-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--color-border, #2a2a2a);
+}
+
+.hw-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.hw-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  padding: 12px 18px;
+  border-top: 1px solid var(--color-border, #2a2a2a);
+}
+
+/* The node editor modal is a touch wider since agent_task carries many fields. */
+.hw-node-modal {
+  width: 460px;
+  max-width: 92vw;
+}
+
+.hw-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.hw-alert {
+  margin: 0;
+  font-size: 0.9em;
+  color: var(--color-destructive, #d35);
+}
+
+.hw-status {
+  margin: 4px 0;
+  font-size: 0.9em;
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+
+.hw-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  color: var(--color-muted-foreground, #9a9a9a);
+  cursor: pointer;
+}
+
+/* Status pill for the Runs/Schedules tables. Neutral by default; success and
+   failure states tint with the host's semantic tokens. */
+.hw-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.78em;
+  line-height: 1.6;
+  border: 1px solid var(--color-border, #2a2a2a);
+  background: var(--color-secondary, #2a2a2a);
+  color: var(--color-secondary-foreground, #f2f2f2);
+}
+.hw-badge--running,
+.hw-badge--waiting,
+.hw-badge--created {
+  border-color: color-mix(in srgb, var(--color-ring, #4a90e2) 50%, transparent);
+  color: var(--color-ring, #4a90e2);
+}
+.hw-badge--completed {
+  border-color: color-mix(in srgb, var(--color-primary, #4a90e2) 50%, transparent);
+  color: var(--color-primary, #4a90e2);
+}
+.hw-badge--failed,
+.hw-badge--cancelled {
+  border-color: color-mix(in srgb, var(--color-destructive, #d35) 45%, transparent);
+  color: var(--color-destructive, #d35);
+}
+.hw-badge--enabled {
+  border-color: color-mix(in srgb, var(--color-primary, #4a90e2) 50%, transparent);
+  color: var(--color-primary, #4a90e2);
+}
+.hw-badge--disabled {
+  opacity: 0.75;
+}
+/* Job-kind tag (e.g. "Workflow") that distinguishes a workflow-trigger cron
+   schedule from a host Automation Blueprint job; neutral, muted. */
+.hw-badge--kind {
+  border-color: color-mix(in srgb, var(--color-midground, #9a9a9a) 35%, transparent);
+  color: var(--color-midground, #9a9a9a);
+}
+
+/* A disabled workflow row reads dimmer than the active ones. */
+.hw-row--disabled {
+  opacity: 0.6;
+}
+
+/* === Layout primitives ======================================================
+ * Small, composable building blocks so views describe structure with class
+ * names instead of inline style objects. Everything is token-driven and
+ * reusable across pages, the editor, and the run inspector. */
+
+/* Vertical app/editor shell that fills its host slot. */
+.hw-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 480px;
+}
+
+/* The single plugin header bar. Left = current title (portaled by the active
+   view), centre = that view's actions, right = section nav + O2B indicator. */
+.hw-pluginbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  min-height: 44px;
+  border-bottom: 1px solid var(--color-border, #2a2a2a);
+}
+.hw-pluginbar__brand {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex: none;
+  padding-right: 4px;
+}
+.hw-pluginbar__brand-name {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text, #e6edf3);
+}
+.hw-pluginbar__version {
+  font-size: 0.78em;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted, #8b949e);
+}
+.hw-pluginbar__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.hw-pluginbar__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hw-pluginbar__right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+.hw-pluginbar__nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Title shown in the bar's left slot (workflow / run name). */
+.hw-bar-title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hw-bar-status {
+  font-size: 0.85em;
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+
+/* Open Second Brain (O2B) indicator: label + colour-coded dot, links out. */
+.hw-o2b {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82em;
+  color: var(--color-muted-foreground, #9a9a9a);
+  white-space: nowrap;
+  text-decoration: none;
+}
+/* When the indicator is a link (O2B installed / available), give it the usual
+ *  affordances without adopting the browser's default link colour. */
+a.hw-o2b {
+  cursor: pointer;
+}
+a.hw-o2b:hover,
+a.hw-o2b:focus-visible {
+  color: var(--color-foreground, #e6e6e6);
+  text-decoration: underline;
+}
+.hw-o2b-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-muted-foreground, #9a9a9a);
+}
+.hw-o2b-dot--ok {
+  background: var(--color-success, #4ade80);
+}
+.hw-o2b-dot--down {
+  background: var(--color-destructive, #fb2c36);
+}
+.hw-o2b-dot--unknown {
+  background: var(--color-warning, #ffbd38);
+}
+
+/* The routed content region below the app bar. */
+.hw-main {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Horizontal flex row, vertically centred. Gap modifiers step the spacing. */
+.hw-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.hw-row--sm {
+  gap: 8px;
+}
+.hw-row--xs {
+  gap: 6px;
+}
+.hw-row--wrap {
+  flex-wrap: wrap;
+}
+
+/* Vertical flex column. */
+.hw-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Push following siblings to the far end of a flex row. */
+.hw-spacer {
+  margin-left: auto;
+}
+
+/* A flex child that takes the remaining space (canvas, content panes). */
+.hw-fill {
+  flex: 1;
+  min-height: 0;
+}
+
+/* === Page scaffolding ======================================================= */
+
+/* Standard page padding; also used for transient loading/error messages. */
+.hw-page {
+  padding: 16px;
+}
+.hw-page--narrow {
+  max-width: 640px;
+}
+
+/* Page header: title on the left, actions pushed to the right. */
+.hw-pagehead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.hw-pagehead > :first-child {
+  margin-right: auto;
+}
+
+/* A bordered editor/inspector panel section. */
+.hw-section {
+  padding: 8px;
+}
+
+/* A settings group with its heading spacing. */
+.hw-group {
+  margin-bottom: 20px;
+}
+.hw-group > h3 {
+  margin: 12px 0 8px;
+}
+
+/* === Typography helpers ===================================================== */
+
+/* Small uppercase caption (node type, list headers). */
+.hw-eyebrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+
+/* Dimmed helper text / empty-state notes. */
+.hw-muted {
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+.hw-note {
+  margin: 0;
+  font-size: 0.9em;
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+
+/* Inline error text (node errors, etc.). */
+.hw-error {
+  color: var(--color-destructive, #e06c6c);
+}
+
+/* Preformatted output that wraps instead of overflowing. */
+.hw-output {
+  white-space: pre-wrap;
+  margin: 8px 0;
+}
+
+/* Agent-telemetry block in the run inspector's node detail. */
+.hw-telemetry {
+  margin: 8px 0;
+  display: grid;
+  gap: 2px;
+}
+.hw-telemetry-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.9em;
+}
+.hw-telemetry-label {
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+
+/* Command-approval note inside the telemetry block. */
+.hw-approval {
+  margin-top: 6px;
+}
+.hw-approval__pending {
+  margin: 0;
+  color: var(--color-warning, #d6b25e);
+}
+
+/* === Editor =================================================================
+ * The flow editor and run inspector share the shell; these name the regions
+ * inside them. */
+.hw-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+}
+.hw-editor-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.hw-canvas {
+  flex: 1;
+  min-height: 0;
+  /* Anchor for the floating run-log panel. */
+  position: relative;
+}
+
+/* Floating, collapsible run-log panel: a curated, timestamped narrative of the
+   run, over the canvas bottom-right (not in the page header). */
+.hw-runlog {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  max-width: 320px;
+  border: 1px solid var(--color-border, #3a3a3a);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-card, #1d1d1d);
+  color: var(--color-card-foreground, var(--color-foreground, #ededed));
+  box-shadow: 0 4px 16px rgb(0 0 0 / 35%);
+  font-size: 12px;
+  overflow: hidden;
+}
+.hw-runlog__toggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border: none;
+  background: var(--color-muted, #262626);
+  color: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.hw-runlog__list {
+  list-style: none;
+  margin: 0;
+  padding: 6px 10px;
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.hw-runlog__item {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.hw-runlog__time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+
+/* ReactFlow canvas chrome themed with Hermes tokens — the library ships a light
+   palette (white control buttons, dark icons) that is unreadable on the dark
+   host theme. Scoped to the plugin root and more specific than the library's
+   own `.react-flow__*` rules, so it wins without !important. */
+.hw-root .react-flow__controls {
+  border-radius: var(--radius-md, 6px);
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+.hw-root .react-flow__controls-button {
+  background: var(--color-secondary, #2a2a2a);
+  border-bottom: 1px solid var(--color-border, #2a2a2a);
+  color: var(--color-secondary-foreground, #f2f2f2);
+  fill: currentColor;
+}
+.hw-root .react-flow__controls-button:hover {
+  background: var(--color-accent, var(--color-muted, #3a3a3a));
+}
+.hw-root .react-flow__controls-button svg,
+.hw-root .react-flow__controls-button svg path {
+  fill: currentColor;
+}
+/* Dropdown menu (toolbar add-node, tools, …). */
+.hw-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.hw-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 168px;
+  padding: 4px;
+  background: var(--color-card, var(--background, #1e1e1e));
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: var(--radius-md, 6px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.hw-menu :where(button) {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+/* Open to the left: anchor the popover to the trigger's right edge. */
+.hw-menu--end {
+  left: auto;
+  right: 0;
+}
+
+/* Inline text link (e.g. a workflow name that navigates to its editor). */
+.hw-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--color-primary, var(--color-foreground, #ededed));
+  text-decoration: none;
+  cursor: pointer;
+}
+.hw-link:hover {
+  text-decoration: underline;
+}
+
+/* Inline SVG icon sizing — scales with the surrounding text. */
+.hw-icon {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+}
+
+/* Menu trigger caret: muted, smaller, and flips when the menu is open
+   (driven by the trigger's aria-expanded so no extra state is needed). */
+.hw-menu-caret {
+  display: inline-flex;
+  margin-left: 2px;
+  opacity: 0.7;
+  transition: transform 0.15s ease;
+}
+.hw-menu-caret .hw-icon {
+  width: 0.85em;
+  height: 0.85em;
+}
+[aria-expanded="true"] > .hw-menu-caret {
+  transform: rotate(180deg);
+}
+
+/* Leading icon on a menu item. */
+.hw-menu-icon {
+  display: inline-flex;
+  opacity: 0.85;
+}
+
+/* Run inspector right-hand detail rail. */
+.hw-run-rail {
+  min-width: 240px;
+  padding: 8px;
+}
+/* Reset list used as a vertical button menu (run node list). */
+.hw-navlist {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0 12px;
+}
+.hw-navlist :where(button) {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+/* === Flow node cards ========================================================
+ * Shared card for the editor and run-inspector custom nodes. The run inspector
+ * adds a status-coloured left border driven by the node's `data-status`. */
+.hw-node {
+  box-sizing: border-box;
+  min-width: 140px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--color-border, #3a3a3a);
+  background: var(--color-card, #1d1d1d);
+  color: var(--color-card-foreground, var(--color-foreground, #ededed));
+  font-size: 12px;
+}
+.hw-node.is-selected {
+  border-color: var(--color-ring, #5b9dd9);
+}
+.hw-node__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hw-node__type {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+/* The node-type glyph matches the picker icon; sized to the small type label. */
+.hw-node__type .hw-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+.hw-node__id {
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.8;
+}
+/* Open-editor button on a node: a bare icon, not the default secondary button. */
+.hw-node__open {
+  flex-shrink: 0;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--color-muted-foreground, #9a9a9a);
+  border-radius: var(--radius-sm, 4px);
+  line-height: 0;
+  cursor: pointer;
+}
+.hw-node__open:hover {
+  color: var(--color-foreground, #ededed);
+  background: var(--color-accent, transparent);
+}
+.hw-node__open .hw-icon {
+  width: 14px;
+  height: 14px;
+}
+.hw-node__title {
+  font-weight: 600;
+}
+.hw-node__meta {
+  font-size: 10px;
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+/* Run status on its own line: starting a run augments the node card rather
+   than overwriting its `profile · model` info line. The status colour is
+   carried by the node's left border (see `.hw-node--run[data-status=…]`). */
+.hw-node__status {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* The plugin root fills its host tab. The shell wraps plugin routes in an
+   auto-height block, so `height: 100%` can't fill — `useFillHeight` measures the
+   root's offset and publishes `--hw-fill-height` (viewport bottom minus the
+   root's top). Falls back to 100% before the measurement lands / in tests. */
+/* Full-bleed for the whole plugin: cancel the host content column's padding
+   once, on the shared root, so every view reaches the panel edges. Negative
+   margins mirror the shell's px-3/sm:px-6, pt-2/sm:pt-4/lg:pt-6 and pb-8
+   wrappers. Views that want inner breathing room add it themselves (the list
+   pages via `.hw-page`); the editor/inspector go edge-to-edge. */
+.hw-root {
+  height: var(--hw-fill-height, 100%);
+  margin: -0.5rem -0.75rem -2rem;
+}
+@media (min-width: 640px) {
+  .hw-root {
+    margin: -1rem -1.5rem -2rem;
+  }
+}
+@media (min-width: 1024px) {
+  .hw-root {
+    margin: -1.5rem -1.5rem -2rem;
+  }
+}
+
+/* Run-status palette. The dim states (pending/skipped/cancelled) and the
+   semantic warning/destructive states follow Hermes design-system tokens so
+   they track theme switches. Running and completed are fixed hex on purpose:
+   the host theme's ring token renders near-white, which read as "no status"
+   on the canvas — operator-confirmed semantics are running = blue,
+   completed = green (2026-06-07). */
+.hw-root {
+  --hw-status-pending: var(--color-border, #6b7280);
+  --hw-status-scheduled: var(--color-muted-foreground, #7aa7d6);
+  --hw-status-running: #3b82f6;
+  --hw-status-waiting_for_review: var(--color-warning, #d6b25e);
+  --hw-status-completed: #2ea44f;
+  --hw-status-failed: var(--color-destructive, #c0392b);
+  --hw-status-skipped: var(--color-border, #4b5563);
+  --hw-status-cancelled: var(--color-muted-foreground, #374151);
+}
+.hw-node--run {
+  border-left-width: 4px;
+}
+.hw-node--run[data-status="pending"] {
+  border-left-color: var(--hw-status-pending);
+}
+.hw-node--run[data-status="scheduled"] {
+  border-left-color: var(--hw-status-scheduled);
+}
+.hw-node--run[data-status="running"] {
+  border-left-color: var(--hw-status-running);
+}
+.hw-node--run[data-status="waiting_for_review"] {
+  border-left-color: var(--hw-status-waiting_for_review);
+}
+.hw-node--run[data-status="completed"] {
+  border-left-color: var(--hw-status-completed);
+}
+.hw-node--run[data-status="failed"] {
+  border-left-color: var(--hw-status-failed);
+}
+.hw-node--run[data-status="skipped"] {
+  border-left-color: var(--hw-status-skipped);
+}
+.hw-node--run[data-status="cancelled"] {
+  border-left-color: var(--hw-status-cancelled);
+}
+
+/* === Tables ================================================================= */
+.hw-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.hw-table :where(th, td) {
+  text-align: left;
+  padding: 4px 12px 4px 0;
+  border-bottom: 1px solid var(--color-border, #2a2a2a);
+}
+.hw-table--nowrap :where(th, td) {
+  white-space: nowrap;
+}
+
+/* === Forms ==================================================================
+ * `.hw-form` stacks fields with consistent spacing; `.hw-field` (defined above)
+ * is the label+control unit; `.hw-fieldset` styles grouped controls. */
+.hw-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* The inspector form root is a <fieldset> (so `disabled` makes it fully
+   read-only); strip the element's default chrome so it lays out like a plain
+   stack. `min-inline-size: 0` defeats the fieldset min-content default. */
+.hw-form--inspector {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+/* A read-only inspector is visibly inert, not just non-interactive. */
+.hw-form--inspector:disabled {
+  opacity: 0.7;
+}
+.hw-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: var(--radius-md, 6px);
+}
+.hw-fieldset > legend {
+  padding: 0 4px;
+  font-size: 0.8em;
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+.hw-maprow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* === Validation issue lists ================================================= */
+.hw-issues {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+.hw-issue--error {
+  color: var(--color-destructive, #e06c6c);
+}
+.hw-issue--warn {
+  color: var(--hw-status-waiting_for_review, #d6b25e);
+}
+
+/* Modal titles never carry default heading margins. */
+.hw-modal > h3 {
+  margin: 0;
+}
+
+/* ============================================================================
+ * Base UI primitives, dressed as Hermes controls.
+ *
+ * These style the `@base-ui/react` parts wrapped in `ui/components/`
+ * (Checkbox, Select). Inputs/Textareas reuse `.hw-input`; the Button reuses
+ * `.hw-btn`. State comes from Base UI data-attributes (`[data-checked]`,
+ * `[data-highlighted]`, `[data-popup-open]`), not extra class toggling.
+ * See DESIGN.md for the contract.
+ * ========================================================================== */
+
+/* --- Checkbox: a square box + check indicator (Base UI Checkbox.Root span). */
+.hw-checkbox-box {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--color-input, var(--color-border, #2a2a2a));
+  background: var(--background, #1e1e1e);
+  color: var(--color-primary-foreground, #fff);
+  cursor: pointer;
+}
+.hw-checkbox-box[data-checked] {
+  background: var(--color-primary, #4a90e2);
+  border-color: transparent;
+}
+.hw-checkbox-box[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.hw-checkbox-box:focus-visible {
+  outline: 2px solid var(--color-ring, #4a90e2);
+  outline-offset: 1px;
+}
+.hw-checkbox-indicator {
+  display: inline-flex;
+}
+.hw-checkbox-indicator .hw-icon {
+  width: 12px;
+  height: 12px;
+}
+
+/* --- Switch: a square track + sliding square thumb, for a single on/off
+ *     setting. Mirrors the host Hermes toggle exactly — NO border-radius (the
+ *     Hermes switch has square corners), 20x36 track, 14px thumb, coloured from
+ *     the `--midground`/`--background` tokens. The switch sits first in its row,
+ *     label after. */
+.hw-switch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  color: var(--color-muted-foreground, #9a9a9a);
+  cursor: pointer;
+}
+.hw-switch {
+  flex: none;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  width: 36px;
+  height: 20px;
+  border: 1px solid color-mix(in oklab, var(--color-midground, #9a9a9a) 20%, transparent);
+  background: var(--background, #1e1e1e);
+  cursor: pointer;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.hw-switch[data-checked] {
+  background: color-mix(in oklab, var(--color-midground, #9a9a9a) 15%, transparent);
+  border-color: color-mix(in oklab, var(--color-midground, #9a9a9a) 30%, transparent);
+}
+.hw-switch[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.hw-switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-midground, #9a9a9a) 30%, transparent);
+}
+.hw-switch-thumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  translate: 2px 0;
+  background: color-mix(in oklab, var(--color-midground, #9a9a9a) 40%, transparent);
+  transition: translate 0.12s ease, background-color 0.12s ease;
+}
+.hw-switch[data-checked] .hw-switch-thumb {
+  translate: 16px 0;
+  background: var(--color-midground, #ededed);
+}
+
+/* --- Select: the trigger reuses `.hw-select` (input-like); these parts add the
+ *     trigger layout and the portaled dark popup. */
+.hw-select-trigger {
+  justify-content: space-between;
+  text-align: left;
+  cursor: pointer;
+}
+.hw-select-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hw-select-value[data-placeholder] {
+  opacity: 0.6;
+}
+.hw-select-icon {
+  display: inline-flex;
+  flex: none;
+  opacity: 0.7;
+}
+
+/* Popup is portaled to <body>, so it sits above the modal overlay (z-index 50). */
+.hw-select-positioner {
+  z-index: 60;
+  outline: none;
+}
+.hw-select-popup {
+  box-sizing: border-box;
+  min-width: var(--anchor-width);
+  max-height: min(var(--available-height, 16rem), 18rem);
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--color-border, #2a2a2a);
+  background: var(--color-card, var(--background, #1e1e1e));
+  color: var(--color-foreground, #ededed);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  outline: none;
+}
+.hw-select-list {
+  outline: none;
+}
+.hw-select-item {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm, 4px);
+  font-size: 0.9em;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+}
+.hw-select-item[data-highlighted] {
+  background: var(--color-secondary, #2a2a2a);
+}
+.hw-select-item-indicator {
+  grid-column: 1;
+  display: inline-flex;
+  color: var(--color-primary, #4a90e2);
+}
+.hw-select-item-indicator .hw-icon {
+  width: 13px;
+  height: 13px;
+}
+.hw-select-item-text {
+  grid-column: 2;
+}
+.hw-select-group-label {
+  padding: 6px 8px 2px;
+  font-size: 0.72em;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+
+/* --- Conditional branching: labeled source handles + colored edges --------- */
+
+/* A node's outgoing branch points are anchored on its right EDGE (ReactFlow's
+   default for a Right handle) and spread vertically. They are unlabeled - the
+   dot's color carries the meaning - and absolutely positioned, so they never
+   push or resize the node's content. */
+.hw-node {
+  position: relative;
+}
+.hw-handle.react-flow__handle {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-border, #6b7280);
+  border: 1px solid var(--color-card, #1d1d1d);
+}
+/* Only success/failure are color-coded; every other branch point keeps the
+   neutral default dot. */
+.hw-handle--success {
+  background: #2ea44f;
+}
+.hw-handle--failure {
+  background: var(--color-destructive, #c0392b);
+}
+/* The add-branch ("+") affordance: revealed on node hover, nested in the
+   bottom-right corner with the node's own corner radius, the glyph centered.
+   Adds the next unused outcome handle; disabled when all are shown. */
+.hw-node__add-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--color-border, #3a3a3a);
+  border-radius: 0 0 var(--radius-md, 6px) 0;
+  background: var(--color-muted, #262626);
+  color: var(--color-foreground, #ededed);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.hw-node:hover .hw-node__add-handle {
+  opacity: 1;
+}
+.hw-node:hover .hw-node__add-handle:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Edge stroke tone by branch meaning; a plain edge keeps the ReactFlow default. */
+.hw-edge--success {
+  stroke: #2ea44f;
+}
+.hw-edge--failure {
+  stroke: var(--color-destructive, #c0392b);
+}
+.hw-edge--review {
+  stroke: var(--color-warning, #d6b25e);
+}
+.hw-edge--else {
+  stroke: var(--color-muted-foreground, #9a9a9a);
+}
+.hw-edge.is-selected {
+  stroke-width: 3;
+}
+/* Hover: a clear blue highlight, distinct from the resting branch tones. The
+ * hovered edge is also lifted above nodes (its zIndex is raised in JS - the SVG
+ * edge layer cannot be CSS-stacked above the HTML node layer). Two classes beat
+ * the single-class branch tones on specificity, so no !important is needed. */
+.hw-edge.is-hovered {
+  stroke: #4493f8;
+  stroke-width: 3;
+}
+
+/* The branch-cause label chip on a conditioned edge. */
+.hw-edge-label {
+  position: absolute;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  pointer-events: all;
+  background: var(--color-card, #1d1d1d);
+  border: 1px solid var(--color-border, #3a3a3a);
+  color: var(--color-muted-foreground, #9a9a9a);
+}
+.hw-edge-label--success {
+  color: #2ea44f;
+  border-color: #2ea44f;
+}
+.hw-edge-label--failure {
+  color: var(--color-destructive, #c0392b);
+  border-color: var(--color-destructive, #c0392b);
+}
+.hw-edge-label--review {
+  color: var(--color-warning, #d6b25e);
+  border-color: var(--color-warning, #d6b25e);
+}
+.hw-edge-label--else {
+  font-style: italic;
+}
+
+/* Toast notifications (Base UI Toast parts, wrapped in ui/components/Toast).
+ * A fixed viewport at the bottom-right stacks dismissible cards; the save-error
+ * variant uses the destructive accent so a failed save cannot be missed. */
+.hw-toast-viewport {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(420px, calc(100vw - 32px));
+  outline: none;
+}
+.hw-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-card, #1d1d1d);
+  border: 1px solid var(--color-border, #3a3a3a);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 35%);
+  color: var(--color-foreground, #e6edf3);
+}
+.hw-toast--save-error,
+.hw-toast--error {
+  border-color: var(--color-destructive, #c0392b);
+}
+.hw-toast__body {
+  flex: 1;
+  min-width: 0;
+}
+.hw-toast__title {
+  font-weight: 600;
+  font-size: 13px;
+  margin: 0 0 2px;
+}
+.hw-toast--save-error .hw-toast__title,
+.hw-toast--error .hw-toast__title {
+  color: var(--color-destructive, #c0392b);
+}
+.hw-toast__description {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--color-muted-foreground, #9a9a9a);
+  overflow-wrap: anywhere;
+}
+.hw-toast__close {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--color-muted-foreground, #9a9a9a);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.hw-toast__close:hover {
+  color: var(--color-foreground, #e6edf3);
+}

@@ -1,0 +1,275 @@
+"""One asyncio loop per process, independent of HTTP request lifetimes."""
+
+from __future__ import annotations
+
+import asyncio
+import atexit
+import contextvars
+import json
+import logging
+import os
+import threading
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .db import ConflictError, Database, hermes_home
+from .engine import Engine
+from .executor import Executor
+from .schedules import Cron, iso_now
+from .specs import SpecStore
+
+log = logging.getLogger(__name__)
+
+
+class Runtime:
+    def __init__(
+        self,
+        db: Database | None = None,
+        specs: SpecStore | None = None,
+        executor: Executor | None = None,
+    ):
+        self.db = db or Database()
+        self.specs = specs or SpecStore()
+        self.engine = Engine(self.db, executor)
+        self.owner = uuid.uuid4().hex
+        self.thread: threading.Thread | None = None
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self._stop: asyncio.Event | None = None
+        self._ready = threading.Event()
+        self._lock = threading.Lock()
+        self._startup_error: BaseException | None = None
+        self._closed = False
+
+    @property
+    def closed(self):
+        return self._closed
+
+    def start(self):
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("workflow runtime is closed")
+            if self.thread is None:
+                self.thread = threading.Thread(
+                    target=contextvars.copy_context().run,
+                    args=(self._thread_main,),
+                    name="hermes-workflows",
+                    daemon=True,
+                )
+                self.thread.start()
+        if not self._ready.wait(10):
+            raise RuntimeError("workflow runtime did not start")
+        if self._startup_error:
+            raise RuntimeError("workflow runtime failed") from self._startup_error
+        return self
+
+    def _thread_main(self):
+        try:
+            with asyncio.Runner() as runner:
+                self.loop = runner.get_loop()
+                runner.run(self._supervise())
+        except BaseException as exc:
+            self._startup_error = exc
+            log.exception("workflow runtime stopped")
+            self._ready.set()
+
+    async def _supervise(self):
+        self._stop = asyncio.Event()
+        # Every host (gateway, CLI and HTTP) gets the same startup reconciliation.
+        # No tool call or HTTP request is needed before schedules become active.
+        for detail in self.specs.all():
+            try:
+                self.sync_schedule(detail["workflow"])
+            except (KeyError, ValueError):
+                log.warning("invalid workflow schedule: %s", detail["path"])
+        self._ready.set()
+        tasks = {}
+        last_schedules = 0.0
+        try:
+            while not self._stop.is_set():
+                for run_id, task in list(tasks.items()):
+                    if task.done():
+                        try:
+                            task.result()
+                        except Exception:
+                            log.exception("workflow driver failed: %s", run_id)
+                        del tasks[run_id]
+                for run_id in self.db.active_ids():
+                    if run_id in tasks:
+                        continue
+                    state = self.db.get_run(run_id)
+                    if state["status"] == "waiting":
+                        continue
+                    if self.db.claim(run_id, self.owner):
+                        tasks[run_id] = asyncio.create_task(self.engine.drive(run_id, self.owner))
+                if time.monotonic() - last_schedules >= 1:
+                    try:
+                        await asyncio.to_thread(self.tick_schedules)
+                    except Exception:
+                        log.exception("schedule tick failed")
+                    last_schedules = time.monotonic()
+                try:
+                    await asyncio.wait_for(self._stop.wait(), timeout=0.1)
+                except TimeoutError:
+                    pass
+        finally:
+            for task in tasks.values():
+                task.cancel()
+            await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+        # A concurrent registration may still be starting its event loop.
+        if self.thread and not self._ready.is_set():
+            self._ready.wait(10)
+        if self.loop and self._stop:
+            try:
+                self.loop.call_soon_threadsafe(self._stop.set)
+            except RuntimeError:
+                pass  # Already stopped; repeated unload/atexit is harmless.
+        if self.thread and self.thread is not threading.current_thread():
+            self.thread.join(timeout=10)
+            if self.thread.is_alive():
+                log.warning("workflow runtime is still finishing shutdown")
+
+    def sync_schedule(self, workflow: dict):
+        job_id = "workflow-" + workflow["id"]
+        try:
+            old = self.db.schedule(job_id)
+        except KeyError:
+            old = None
+        trigger = workflow["trigger"]
+        if trigger["type"] != "cron":
+            if old:
+                self.db.delete_schedule(job_id)
+            return
+        signature = json.dumps(trigger, sort_keys=True)
+        if old and old.get("spec_signature") == signature:
+            # Manual cron edits/pauses are retained until the spec trigger changes.
+            if old.get("workflow_enabled") != workflow.get("enabled", True):
+                old["enabled"] = workflow.get("enabled", True)
+                old["workflow_enabled"] = old["enabled"]
+                self.db.put_schedule(old)
+            return
+        cron = Cron(trigger["schedule"], trigger.get("timezone", "UTC"))
+        data = {
+            "hermes_cron_id": job_id,
+            "workflow_id": workflow["id"],
+            "cron_expression": trigger["schedule"],
+            "timezone": trigger.get("timezone", "UTC"),
+            "enabled": workflow.get("enabled", True),
+            "workflow_enabled": workflow.get("enabled", True),
+            "last_run": old.get("last_run") if old else None,
+            "next_run": cron.next().isoformat(),
+            "spec_signature": signature,
+        }
+        self.db.put_schedule(data)
+
+    def tick_schedules(self):
+        # An atomic due-time update prevents gateway and dashboard processes
+        # from firing the same schedule. Single-flight run creation is a second
+        # guard. Missed intervals coalesce into one fire after restart.
+        for row in self.db.schedules():
+            if not row["enabled"] or row.get("deleted") or not row.get("next_run"):
+                continue
+            now = datetime.now(timezone.utc)
+            if datetime.fromisoformat(row["next_run"]) > now:
+                continue
+            claimed = False
+            with self.db.connect(write=True) as con:
+                current = con.execute(
+                    "SELECT data FROM py_schedules WHERE id=?", (row["hermes_cron_id"],)
+                ).fetchone()
+                if current:
+                    live = json.loads(current[0])
+                    if (
+                        live.get("enabled")
+                        and not live.get("deleted")
+                        and live.get("next_run") == row["next_run"]
+                    ):
+                        live["next_run"] = (
+                            Cron(live["cron_expression"], live["timezone"]).next(now).isoformat()
+                        )
+                        live["last_run"] = iso_now()
+                        con.execute(
+                            "UPDATE py_schedules SET data=? WHERE id=?",
+                            (json.dumps(live), row["hermes_cron_id"]),
+                        )
+                        claimed = True
+            if claimed:
+                try:
+                    detail = self.specs.get(row["workflow_id"])
+                    self.engine.start(detail["workflow"], workflow_path=detail["path"])
+                except ConflictError:
+                    log.info("scheduled run skipped while disabled or busy: %s", row["workflow_id"])
+                except Exception:
+                    log.exception("scheduled workflow failed: %s", row["workflow_id"])
+
+
+_runtimes: dict[str, Runtime] = {}
+_runtime_owners: dict[Runtime, int] = {}
+_runtime_lock = threading.RLock()
+
+
+def _home_key(home: Path) -> str:
+    return os.path.normcase(str(home.expanduser().resolve()))
+
+
+def get_runtime(home: Path | None = None) -> Runtime:
+    home = (Path(home) if home is not None else hermes_home()).expanduser().resolve()
+    key = _home_key(home)
+    with _runtime_lock:
+        runtime = _runtimes.get(key)
+        if runtime is None or runtime.closed:
+            root = home / "workflows"
+            runtime = Runtime(
+                Database(root / "runs.db"), SpecStore([root / "global", root / "templates"])
+            )
+            runtime.engine.executor.home = home
+            _runtimes[key] = runtime
+            atexit.register(runtime.close)
+        try:
+            return runtime.start()
+        except BaseException:
+            _runtimes.pop(key, None)
+            runtime.close()
+            raise
+
+
+def stop_runtime(runtime: Runtime):
+    """Dispose only the captured generation, never a replacement for that home."""
+    with _runtime_lock:
+        for key, current in list(_runtimes.items()):
+            if current is runtime:
+                del _runtimes[key]
+        _runtime_owners.pop(runtime, None)
+        atexit.unregister(runtime.close)
+    runtime.close()
+
+
+def own_runtime(runtime: Runtime):
+    """Share lifetime between plugin registration and an embedded HTTP host."""
+    released = False
+    with _runtime_lock:
+        _runtime_owners[runtime] = _runtime_owners.get(runtime, 0) + 1
+
+    def release():
+        nonlocal released
+        with _runtime_lock:
+            if released:
+                return
+            released = True
+            remaining = _runtime_owners.get(runtime, 1) - 1
+            if remaining > 0:
+                _runtime_owners[runtime] = remaining
+                return
+            _runtime_owners.pop(runtime, None)
+            for key, current in list(_runtimes.items()):
+                if current is runtime:
+                    del _runtimes[key]
+            atexit.unregister(runtime.close)
+        runtime.close()
+
+    return release

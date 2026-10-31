@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/itechmeat/hermes-workflows",
+  "commit": "352e5ffb751e4798e66dcdf1dbe9a80dff768c0f",
+  "files": {
+    "dist/index.js": "e7866c3ece8e0e9f3a8af2c07a3fd585f54117cb505b6c517ec475ed3f65ea17",
+    "dist/index.css": "15ef73a9240fe01db5a2e178e6796de408f4f8ab627f1864ea0c8dc82d9c59e0"
+  },
+  "original_manifest_sha256": "2cb2f1cab873da6ed1fca62d5a017a2508a3eb3ed2bfaaa3a091afe23370ddd6",
+  "local_files": {
+    "manifest.json": "9778922694f0d7ebdc8846b09b44155d60c2dff0aca7308d2bacbfa3facf6b2a",
+    "entry.js": "0989051ef0c8a23c54f1b382e34966e1a64e4728e21fbd7d9041dcd857b9e81f",
+    "style.css": "5f6a7351766f94efb8ddf79809d8c3e59dffb8142ac353c1e1d72afbb41e1f57",
+    "compat/index.js": "beecdef531527d0123cb3b894fde1b5ae88e5200566c51fb3a6331f05c6a9970",
+    "compat/index.css": "15ef73a9240fe01db5a2e178e6796de408f4f8ab627f1864ea0c8dc82d9c59e0"
+  }
+}

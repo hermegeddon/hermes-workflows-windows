@@ -1,0 +1,25 @@
+{
+  "id": "windows-smoke",
+  "name": "Windows native smoke workflow",
+  "version": 1,
+  "scope": {"type": "global"},
+  "trigger": {"type": "manual"},
+  "nodes": [
+    {
+      "id": "hello",
+      "type": "script",
+      "shell": "powershell",
+      "command": "Write-Output 'Hello from native Windows Python — żółć'",
+      "timeout_seconds": 15
+    },
+    {"id": "review", "type": "human_review", "options": ["approved", "rejected"]},
+    {"id": "success", "type": "finish", "outcome": "success"},
+    {"id": "failure", "type": "finish", "outcome": "failure"}
+  ],
+  "edges": [
+    {"from": "hello", "to": "review", "condition": {"type": "node_status", "node": "hello", "equals": "success"}},
+    {"from": "hello", "to": "failure", "condition": {"type": "node_status", "node": "hello", "equals": "failure"}},
+    {"from": "review", "to": "success", "condition": {"type": "review_status", "equals": "approved"}},
+    {"from": "review", "to": "failure", "condition": {"type": "review_status", "equals": "rejected"}}
+  ]
+}

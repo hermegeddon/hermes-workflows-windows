@@ -1,0 +1,15 @@
+{
+  "name": "hermes-workflows",
+  "label": "Workflows",
+  "description": "Visual workflow orchestration over Hermes Kanban, Cron, and Profiles.",
+  "icon": "Activity",
+  "version": "0.2.0",
+  "tab": {
+    "path": "/workflows",
+    "position": "after:skills"
+  },
+  "slots": [],
+  "entry": "entry.js",
+  "css": "style.css",
+  "api": "plugin_api.py"
+}

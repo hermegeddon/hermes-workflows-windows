@@ -1,0 +1,31 @@
+@import url("./compat/index.css");
+
+.hwp-reviews:empty { display: none; }
+.hwp-review {
+  padding: 1rem;
+  margin-bottom: .75rem;
+  border: 1px solid var(--color-border, #6a7990);
+  border-radius: .5rem;
+  background: var(--background, #15202b);
+  color: var(--color-foreground, #fff);
+}
+.hwp-review h2 { font-size: 1rem; font-weight: 600; margin: 0 0 .25rem; }
+.hwp-review p { margin: .25rem 0 .5rem; }
+.hwp-review label { display: block; font-size: .875rem; }
+.hwp-review textarea {
+  display: block; width: 100%; max-width: 44rem; resize: vertical;
+  margin: .25rem 0 .75rem; padding: .5rem;
+  border: 1px solid var(--color-border, #6a7990); border-radius: .25rem;
+  background: var(--background, #15202b); color: inherit; font: inherit;
+}
+.hwp-review-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.hwp-review button {
+  padding: .4rem .8rem; border: 1px solid var(--color-border, #6a7990);
+  border-radius: .25rem; font: inherit; color: inherit;
+  background: var(--color-secondary, #293848); cursor: pointer;
+}
+.hwp-review button:disabled { opacity: .6; cursor: wait; }
+.hwp-review button:focus-visible, .hwp-review textarea:focus-visible {
+  outline: 2px solid var(--color-ring, #70caca); outline-offset: 2px;
+}
+.hwp-review [role="alert"] { color: var(--color-destructive, #ff9b9b); }
