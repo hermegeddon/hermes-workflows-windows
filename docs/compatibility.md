@@ -143,8 +143,16 @@ cleared note, then Approve completed it. Persisted attempt history retained both
 decisions with distinct identities; the API handler rejected the old token with
 409 against that live run. Shell execution remained disabled. The previous
 temporary dashboard listener had expired and was replaced by a loopback-only
-Hermes dashboard using the existing auth configuration. Native Desktop loop
-interaction remains part of the final acceptance matrix.
+Hermes dashboard using the existing auth configuration.
+
+Native Hermes Desktop subsequently passed the same loop in the local default
+scope using its installed plugin bundle and SDK transport. The run was started
+from Desktop's workflow actions; Request changes returned to a usable review
+with an empty note, and approving that review completed the run. Read-only
+inspection confirmed two distinct review attempt identities, iteration 1, and
+separate persisted notes for needs_changes and approved. No provider calls or
+shell execution were involved. This completes the local Desktop loop gate before
+Kanban work; remote and remaining feature checks still belong to the final matrix.
 
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner
