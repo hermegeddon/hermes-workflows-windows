@@ -263,7 +263,11 @@ class API:
                 ):
                     raise ValueError("node_id and decision are required strings")
                 result = engine.review(
-                    run_id, payload["node_id"], payload["decision"], payload.get("note")
+                    run_id,
+                    payload["node_id"],
+                    payload["decision"],
+                    payload.get("note"),
+                    attempt_id=payload.get("attempt_id"),
                 )
                 runtime.start()
                 return result

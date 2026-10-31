@@ -21,6 +21,7 @@ SCHEMA = {
                 },
                 {"key": "max_parallel_runs", "type": "int", "default": 4, "enforced": True},
                 {"key": "max_parallel_steps", "type": "int", "default": 4, "enforced": True},
+                {"key": "max_loop_reentries", "type": "int", "default": 100, "enforced": True},
                 {
                     "key": "default_shell",
                     "type": "enum",

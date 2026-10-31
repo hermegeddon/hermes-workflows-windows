@@ -1,0 +1,1538 @@
+{
+  "reference": {
+    "commit": "352e5ffb751e4798e66dcdf1dbe9a80dff768c0f",
+    "source": "packages/core/src/runtime/advance.ts",
+    "source_sha256": "a8770d9593b69e4cb571c68cd0d745673f3f670cd3c0787a88523d0d02684678"
+  },
+  "workflows": {
+    "feature": {
+      "id": "feature-development",
+      "name": "Feature Development",
+      "version": 1,
+      "scope": {
+        "type": "project"
+      },
+      "trigger": {
+        "type": "manual"
+      },
+      "defaults": {
+        "profile": "fullstack-engineer",
+        "max_retries": 1,
+        "memory": {
+          "provider": "auto",
+          "fail_open": true
+        }
+      },
+      "params": [
+        {
+          "name": "feature_request",
+          "type": "text",
+          "label": "Feature request",
+          "required": true,
+          "help": "What the operator wants built, in their own words. Captured before the plan node and interpolated into the Plan feature card so the plan is grounded in a concrete request rather than a generic prompt. Filled from the dashboard form, the /workflow slash command, or a chat deep-link. No default: a run started without it fails closed rather than feeding the plan node a circular placeholder."
+        }
+      ],
+      "nodes": [
+        {
+          "id": "plan",
+          "type": "agent_task",
+          "title": "Plan feature",
+          "profile": "product-tech-lead",
+          "prompt": "Convert the operator's feature request into a concrete implementation plan.\n\nFeature request:\n{{params.feature_request}}\n\nReturn tasks, risks, files likely to change, and validation steps.\n"
+        },
+        {
+          "id": "implement",
+          "type": "agent_task",
+          "title": "Implement feature",
+          "profile": "fullstack-engineer",
+          "workspace": {
+            "type": "worktree"
+          },
+          "prompt": "Implement the feature according to the plan.\n"
+        },
+        {
+          "id": "validate",
+          "type": "agent_task",
+          "title": "Validate implementation",
+          "profile": "qa-engineer",
+          "prompt": "Run lint and tests. Report node outcome success when clean, failure otherwise.\n"
+        },
+        {
+          "id": "fix",
+          "type": "agent_task",
+          "title": "Fix validation errors",
+          "profile": "fullstack-engineer",
+          "prompt": "Fix the validation errors reported by the previous node.\n"
+        },
+        {
+          "id": "review",
+          "type": "human_review",
+          "title": "Final human review",
+          "options": [
+            "approved",
+            "rejected",
+            "needs_changes"
+          ]
+        },
+        {
+          "id": "release_notes",
+          "type": "agent_task",
+          "title": "Prepare release notes",
+          "profile": "product-tech-lead",
+          "prompt": "Prepare release notes for the merged feature.\n"
+        },
+        {
+          "id": "done",
+          "type": "finish",
+          "title": "Done",
+          "outcome": "success"
+        }
+      ],
+      "edges": [
+        {
+          "from": "plan",
+          "to": "implement"
+        },
+        {
+          "from": "implement",
+          "to": "validate"
+        },
+        {
+          "from": "validate",
+          "to": "review",
+          "condition": {
+            "type": "node_status",
+            "node": "validate",
+            "equals": "success"
+          }
+        },
+        {
+          "from": "validate",
+          "to": "fix",
+          "condition": {
+            "type": "node_status",
+            "node": "validate",
+            "equals": "failure"
+          }
+        },
+        {
+          "from": "fix",
+          "to": "validate"
+        },
+        {
+          "from": "review",
+          "to": "release_notes",
+          "condition": {
+            "type": "review_status",
+            "equals": "approved"
+          }
+        },
+        {
+          "from": "release_notes",
+          "to": "done"
+        }
+      ]
+    },
+    "script": {
+      "id": "script",
+      "name": "script",
+      "version": 1,
+      "scope": {
+        "type": "global"
+      },
+      "trigger": {
+        "type": "manual"
+      },
+      "defaults": {
+        "profile": "default"
+      },
+      "nodes": [
+        {
+          "id": "build",
+          "type": "script",
+          "command": "echo ok"
+        },
+        {
+          "id": "gate",
+          "type": "condition"
+        },
+        {
+          "id": "ok",
+          "type": "finish"
+        },
+        {
+          "id": "bad",
+          "type": "finish",
+          "outcome": "failure"
+        }
+      ],
+      "edges": [
+        {
+          "from": "build",
+          "to": "gate"
+        },
+        {
+          "from": "gate",
+          "to": "ok",
+          "condition": {
+            "type": "node_status",
+            "node": "build",
+            "equals": "success"
+          }
+        },
+        {
+          "from": "gate",
+          "to": "bad",
+          "fallback": true
+        }
+      ]
+    },
+    "review": {
+      "id": "review",
+      "name": "review",
+      "version": 1,
+      "scope": {
+        "type": "global"
+      },
+      "trigger": {
+        "type": "manual"
+      },
+      "defaults": {
+        "profile": "default"
+      },
+      "nodes": [
+        {
+          "id": "start",
+          "type": "prompt"
+        },
+        {
+          "id": "work",
+          "type": "agent_task",
+          "prompt": "work"
+        },
+        {
+          "id": "review",
+          "type": "human_review"
+        },
+        {
+          "id": "done",
+          "type": "finish"
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "work"
+        },
+        {
+          "from": "work",
+          "to": "review"
+        },
+        {
+          "from": "review",
+          "to": "work",
+          "condition": {
+            "type": "review_status",
+            "equals": "needs_changes"
+          }
+        },
+        {
+          "from": "review",
+          "to": "done",
+          "condition": {
+            "type": "review_status",
+            "equals": "approved"
+          }
+        }
+      ]
+    },
+    "wait": {
+      "id": "wait",
+      "name": "wait",
+      "version": 1,
+      "scope": {
+        "type": "global"
+      },
+      "trigger": {
+        "type": "manual"
+      },
+      "defaults": {
+        "profile": "default"
+      },
+      "nodes": [
+        {
+          "id": "merge",
+          "type": "wait",
+          "wait_for": {
+            "github_pr_merged": "https://github.com/a/b/pull/1"
+          }
+        },
+        {
+          "id": "done",
+          "type": "finish"
+        }
+      ],
+      "edges": [
+        {
+          "from": "merge",
+          "to": "done"
+        }
+      ]
+    },
+    "join": {
+      "id": "join",
+      "name": "join",
+      "version": 1,
+      "scope": {
+        "type": "global"
+      },
+      "trigger": {
+        "type": "manual"
+      },
+      "defaults": {
+        "profile": "default"
+      },
+      "nodes": [
+        {
+          "id": "start",
+          "type": "prompt"
+        },
+        {
+          "id": "a",
+          "type": "agent_task",
+          "prompt": "a"
+        },
+        {
+          "id": "b",
+          "type": "agent_task",
+          "prompt": "b"
+        },
+        {
+          "id": "join",
+          "type": "agent_task",
+          "prompt": "join"
+        },
+        {
+          "id": "done",
+          "type": "finish"
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "a"
+        },
+        {
+          "from": "start",
+          "to": "b"
+        },
+        {
+          "from": "a",
+          "to": "join"
+        },
+        {
+          "from": "b",
+          "to": "join"
+        },
+        {
+          "from": "join",
+          "to": "done"
+        }
+      ]
+    },
+    "finish": {
+      "id": "finish",
+      "name": "finish",
+      "version": 1,
+      "scope": {
+        "type": "global"
+      },
+      "trigger": {
+        "type": "manual"
+      },
+      "defaults": {
+        "profile": "default"
+      },
+      "nodes": [
+        {
+          "id": "start",
+          "type": "prompt"
+        },
+        {
+          "id": "a",
+          "type": "agent_task",
+          "prompt": "a"
+        },
+        {
+          "id": "b",
+          "type": "agent_task",
+          "prompt": "b"
+        },
+        {
+          "id": "done",
+          "type": "finish"
+        }
+      ],
+      "edges": [
+        {
+          "from": "start",
+          "to": "a"
+        },
+        {
+          "from": "start",
+          "to": "b"
+        },
+        {
+          "from": "a",
+          "to": "done"
+        }
+      ]
+    },
+    "dead": {
+      "id": "dead",
+      "name": "dead",
+      "version": 1,
+      "scope": {
+        "type": "global"
+      },
+      "trigger": {
+        "type": "manual"
+      },
+      "defaults": {
+        "profile": "default"
+      },
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent_task",
+          "prompt": "a"
+        },
+        {
+          "id": "done",
+          "type": "finish"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "done",
+          "condition": {
+            "type": "node_status",
+            "node": "a",
+            "equals": "success"
+          }
+        }
+      ]
+    },
+    "plain": {
+      "id": "plain",
+      "name": "plain",
+      "version": 1,
+      "scope": {
+        "type": "global"
+      },
+      "trigger": {
+        "type": "manual"
+      },
+      "defaults": {
+        "profile": "default"
+      },
+      "nodes": [
+        {
+          "id": "a",
+          "type": "agent_task",
+          "prompt": "a"
+        },
+        {
+          "id": "done",
+          "type": "finish"
+        },
+        {
+          "id": "unused",
+          "type": "finish"
+        }
+      ],
+      "edges": [
+        {
+          "from": "a",
+          "to": "done"
+        },
+        {
+          "from": "a",
+          "to": "unused",
+          "fallback": true
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "entry",
+      "workflow": "feature",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "feature-development",
+        "workflow_version": 1,
+        "status": "created",
+        "nodes": {
+          "plan": {
+            "node_id": "plan",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "implement": {
+            "node_id": "implement",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "validate": {
+            "node_id": "validate",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "fix": {
+            "node_id": "fix",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "review": {
+            "node_id": "review",
+            "node_type": "human_review",
+            "status": "pending"
+          },
+          "release_notes": {
+            "node_id": "release_notes",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [
+          "plan"
+        ],
+        "waiting": [],
+        "node_updates": {
+          "plan": "scheduled"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "entry-idempotent",
+      "workflow": "feature",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "feature-development",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "plan": {
+            "node_id": "plan",
+            "status": "scheduled"
+          },
+          "implement": {
+            "node_id": "implement",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "validate": {
+            "node_id": "validate",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "fix": {
+            "node_id": "fix",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "review": {
+            "node_id": "review",
+            "node_type": "human_review",
+            "status": "pending"
+          },
+          "release_notes": {
+            "node_id": "release_notes",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [],
+        "waiting": [],
+        "node_updates": {},
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "plan-implement",
+      "workflow": "feature",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "feature-development",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "plan": {
+            "node_id": "plan",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "implement": {
+            "node_id": "implement",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "validate": {
+            "node_id": "validate",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "fix": {
+            "node_id": "fix",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "review": {
+            "node_id": "review",
+            "node_type": "human_review",
+            "status": "pending"
+          },
+          "release_notes": {
+            "node_id": "release_notes",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [
+          "implement"
+        ],
+        "waiting": [],
+        "node_updates": {
+          "implement": "scheduled"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "validate-failure-fix",
+      "workflow": "feature",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "feature-development",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "plan": {
+            "node_id": "plan",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "implement": {
+            "node_id": "implement",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 2
+          },
+          "validate": {
+            "node_id": "validate",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "failure",
+            "seq": 3
+          },
+          "fix": {
+            "node_id": "fix",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "review": {
+            "node_id": "review",
+            "node_type": "human_review",
+            "status": "pending"
+          },
+          "release_notes": {
+            "node_id": "release_notes",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "source": "validate",
+      "expected": {
+        "run_status": "running",
+        "schedule": [
+          "fix"
+        ],
+        "waiting": [],
+        "node_updates": {
+          "fix": "scheduled"
+        },
+        "inline_eligible": false
+      },
+      "selected": [
+        "fix"
+      ]
+    },
+    {
+      "name": "validate-success-review",
+      "workflow": "feature",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "feature-development",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "plan": {
+            "node_id": "plan",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "implement": {
+            "node_id": "implement",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 2
+          },
+          "validate": {
+            "node_id": "validate",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 3
+          },
+          "fix": {
+            "node_id": "fix",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "review": {
+            "node_id": "review",
+            "node_type": "human_review",
+            "status": "pending"
+          },
+          "release_notes": {
+            "node_id": "release_notes",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "waiting",
+        "schedule": [],
+        "waiting": [
+          "review"
+        ],
+        "node_updates": {
+          "review": "waiting_for_review"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "fix-back-edge",
+      "workflow": "feature",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "feature-development",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "plan": {
+            "node_id": "plan",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "implement": {
+            "node_id": "implement",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 2
+          },
+          "validate": {
+            "node_id": "validate",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "failure",
+            "seq": 3
+          },
+          "fix": {
+            "node_id": "fix",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 4
+          },
+          "review": {
+            "node_id": "review",
+            "node_type": "human_review",
+            "status": "pending"
+          },
+          "release_notes": {
+            "node_id": "release_notes",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [
+          "validate"
+        ],
+        "waiting": [],
+        "node_updates": {
+          "validate": "scheduled"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "review-release",
+      "workflow": "feature",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "feature-development",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "plan": {
+            "node_id": "plan",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "implement": {
+            "node_id": "implement",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 2
+          },
+          "validate": {
+            "node_id": "validate",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 3
+          },
+          "fix": {
+            "node_id": "fix",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "review": {
+            "node_id": "review",
+            "node_type": "human_review",
+            "status": "waiting_for_review",
+            "review_decision": "approved",
+            "seq": 4
+          },
+          "release_notes": {
+            "node_id": "release_notes",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [
+          "release_notes"
+        ],
+        "waiting": [],
+        "node_updates": {
+          "review": "completed",
+          "release_notes": "scheduled"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "finish",
+      "workflow": "feature",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "feature-development",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "plan": {
+            "node_id": "plan",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "implement": {
+            "node_id": "implement",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 2
+          },
+          "validate": {
+            "node_id": "validate",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 3
+          },
+          "fix": {
+            "node_id": "fix",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "review": {
+            "node_id": "review",
+            "node_type": "human_review",
+            "status": "waiting_for_review",
+            "review_decision": "approved",
+            "seq": 4
+          },
+          "release_notes": {
+            "node_id": "release_notes",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 5
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "completed",
+        "finish_outcome": "success",
+        "schedule": [],
+        "waiting": [],
+        "node_updates": {
+          "review": "completed",
+          "done": "completed"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "script-entry",
+      "workflow": "script",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "script",
+        "workflow_version": 1,
+        "status": "created",
+        "nodes": {
+          "build": {
+            "node_id": "build",
+            "node_type": "script",
+            "status": "pending"
+          },
+          "gate": {
+            "node_id": "gate",
+            "node_type": "condition",
+            "status": "pending"
+          },
+          "ok": {
+            "node_id": "ok",
+            "node_type": "finish",
+            "status": "pending"
+          },
+          "bad": {
+            "node_id": "bad",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [
+          "build"
+        ],
+        "waiting": [],
+        "node_updates": {
+          "build": "scheduled"
+        },
+        "inline_eligible": true
+      }
+    },
+    {
+      "name": "script-success",
+      "workflow": "script",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "script",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "build": {
+            "node_id": "build",
+            "node_type": "script",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "gate": {
+            "node_id": "gate",
+            "node_type": "condition",
+            "status": "pending"
+          },
+          "ok": {
+            "node_id": "ok",
+            "node_type": "finish",
+            "status": "pending"
+          },
+          "bad": {
+            "node_id": "bad",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "completed",
+        "finish_outcome": "success",
+        "schedule": [],
+        "waiting": [],
+        "node_updates": {
+          "gate": "completed",
+          "ok": "completed"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "script-fallback",
+      "workflow": "script",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "script",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "build": {
+            "node_id": "build",
+            "node_type": "script",
+            "status": "completed",
+            "outcome": "failure",
+            "seq": 1
+          },
+          "gate": {
+            "node_id": "gate",
+            "node_type": "condition",
+            "status": "pending"
+          },
+          "ok": {
+            "node_id": "ok",
+            "node_type": "finish",
+            "status": "pending"
+          },
+          "bad": {
+            "node_id": "bad",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "failed",
+        "finish_outcome": "failure",
+        "schedule": [],
+        "waiting": [],
+        "node_updates": {
+          "gate": "completed",
+          "bad": "completed"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "review-reentry",
+      "workflow": "review",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "review",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "start": {
+            "node_id": "start",
+            "node_type": "prompt",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "work": {
+            "node_id": "work",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 2
+          },
+          "review": {
+            "node_id": "review",
+            "node_type": "human_review",
+            "status": "waiting_for_review",
+            "review_decision": "needs_changes",
+            "seq": 3
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [
+          "work"
+        ],
+        "waiting": [],
+        "node_updates": {
+          "work": "scheduled",
+          "review": "completed"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "review-reset",
+      "workflow": "review",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "review",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "start": {
+            "node_id": "start",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "work": {
+            "node_id": "work",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 4
+          },
+          "review": {
+            "node_id": "review",
+            "status": "completed",
+            "review_decision": "needs_changes",
+            "seq": 3
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [],
+        "waiting": [
+          "review"
+        ],
+        "node_updates": {
+          "review": "waiting_for_review"
+        },
+        "inline_eligible": false
+      },
+      "python_expectation": {
+        "run_status": "waiting",
+        "reason": "Clear the previous iteration review_decision and review_note instead of treating a re-entered gate as already decided."
+      }
+    },
+    {
+      "name": "wait-entry",
+      "workflow": "wait",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "wait",
+        "workflow_version": 1,
+        "status": "created",
+        "nodes": {
+          "merge": {
+            "node_id": "merge",
+            "node_type": "wait",
+            "status": "pending"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [],
+        "waiting": [],
+        "node_updates": {
+          "merge": "running"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "wait-complete",
+      "workflow": "wait",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "wait",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "merge": {
+            "node_id": "merge",
+            "node_type": "wait",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "completed",
+        "finish_outcome": "success",
+        "schedule": [],
+        "waiting": [],
+        "node_updates": {
+          "done": "completed"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "parallel-fork",
+      "workflow": "join",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "join",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "start": {
+            "node_id": "start",
+            "node_type": "prompt",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "a": {
+            "node_id": "a",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "b": {
+            "node_id": "b",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "join": {
+            "node_id": "join",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [
+          "a",
+          "b"
+        ],
+        "waiting": [],
+        "node_updates": {
+          "a": "scheduled",
+          "b": "scheduled"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "completed-join",
+      "workflow": "join",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "join",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "start": {
+            "node_id": "start",
+            "node_type": "prompt",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "a": {
+            "node_id": "a",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 2
+          },
+          "b": {
+            "node_id": "b",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 3
+          },
+          "join": {
+            "node_id": "join",
+            "node_type": "agent_task",
+            "status": "pending"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "running",
+        "schedule": [
+          "join"
+        ],
+        "waiting": [],
+        "node_updates": {
+          "join": "scheduled"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "finish-with-active-sibling",
+      "workflow": "finish",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "finish",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "start": {
+            "node_id": "start",
+            "node_type": "prompt",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "a": {
+            "node_id": "a",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 2
+          },
+          "b": {
+            "node_id": "b",
+            "status": "running"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "completed",
+        "finish_outcome": "success",
+        "schedule": [],
+        "waiting": [],
+        "node_updates": {
+          "done": "completed"
+        },
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "unhandled-failure",
+      "workflow": "dead",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "dead",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "a": {
+            "node_id": "a",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "failure",
+            "seq": 1
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "failed",
+        "schedule": [],
+        "waiting": [],
+        "node_updates": {},
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "hard-abort",
+      "workflow": "finish",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "finish",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "start": {
+            "node_id": "start",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "a": {
+            "node_id": "a",
+            "status": "completed",
+            "outcome": "failure",
+            "abort_run": true,
+            "seq": 2
+          },
+          "b": {
+            "node_id": "b",
+            "status": "running"
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "expected": {
+        "run_status": "failed",
+        "schedule": [],
+        "waiting": [],
+        "node_updates": {},
+        "inline_eligible": false
+      }
+    },
+    {
+      "name": "unconditioned-fallback-not-selected",
+      "workflow": "plain",
+      "run": {
+        "run_id": "reference",
+        "workflow_id": "plain",
+        "workflow_version": 1,
+        "status": "running",
+        "nodes": {
+          "a": {
+            "node_id": "a",
+            "node_type": "agent_task",
+            "status": "completed",
+            "outcome": "success",
+            "seq": 1
+          },
+          "done": {
+            "node_id": "done",
+            "node_type": "finish",
+            "status": "pending"
+          },
+          "unused": {
+            "node_id": "unused",
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "source": "a",
+      "expected": {
+        "run_status": "completed",
+        "finish_outcome": "success",
+        "schedule": [],
+        "waiting": [],
+        "node_updates": {
+          "done": "completed"
+        },
+        "inline_eligible": false
+      },
+      "selected": [
+        "done"
+      ]
+    }
+  ]
+}

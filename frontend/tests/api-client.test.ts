@@ -30,6 +30,12 @@ function harness() {
 const BASE = "/api/plugins/hermes-workflows";
 
 describe("workflows API client", () => {
+  it("fences a review request with the exact displayed attempt identity", async () => {
+    const h = harness();
+    await h.client.reviewRun("loop-run", "review", "approved", "checked", "attempt-2");
+    expect(h.last().path).toBe(`${BASE}/runs/loop-run/review`);
+    expect(JSON.parse(h.last().init?.body as string)).toEqual({ node_id: "review", decision: "approved", note: "checked", attempt_id: "attempt-2" });
+  });
   it("lists workflows and unwraps the envelope", async () => {
     const h = harness();
     const item = { id: "wf-1", name: "First", scope: "global", trigger: { type: "manual" } };

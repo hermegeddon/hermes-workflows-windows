@@ -50,7 +50,7 @@ export interface WorkflowsApi {
   getRun(id: string): Promise<RunState>;
   cancelRun(id: string): Promise<RunState>;
   retryRun(id: string, node?: string): Promise<RunState>;
-  reviewRun(id: string, node: string, decision: string, note?: string): Promise<unknown>;
+  reviewRun(id: string, node: string, decision: string, note?: string, attemptId?: string): Promise<unknown>;
   listSchedules(): Promise<ScheduleListItem[]>;
   pauseSchedule(id: string): Promise<unknown>;
   resumeSchedule(id: string): Promise<unknown>;
@@ -162,8 +162,8 @@ export function createApiClient(fetchJSON: FetchJSON): WorkflowsApi {
       return postJson<RunState>(`${run(id)}/retry`, node === undefined ? {} : { node_id: node });
     },
 
-    reviewRun(id, node, decision, note) {
-      return postJson(`${run(id)}/review`, { node_id: node, decision, ...(note ? { note } : {}) });
+    reviewRun(id, node, decision, note, attemptId) {
+      return postJson(`${run(id)}/review`, { node_id: node, decision, ...(note ? { note } : {}), ...(attemptId ? { attempt_id: attemptId } : {}) });
     },
 
     async listSchedules() {

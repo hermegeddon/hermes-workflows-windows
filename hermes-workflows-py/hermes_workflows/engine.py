@@ -1,4 +1,4 @@
-"""Asynchronous DAG execution with persistent review gates and restart recovery."""
+"""Asynchronous graph execution with persistent review gates and restart recovery."""
 
 from __future__ import annotations
 
@@ -11,7 +11,9 @@ from graphlib import TopologicalSorter
 
 from . import settings as settings_module
 from .db import ACTIVE, NODE_TERMINAL, TERMINAL, ConflictError, Database
+from .effects import EffectStore
 from .executor import Executor, Result
+from .graph import analyse, ancestors
 from .specs import REVIEWS, dependencies, fill_params, require_valid, resolve
 
 
@@ -20,7 +22,10 @@ def _initial_node(node: dict) -> dict:
 
 
 def selected_edges(workflow: dict, run: dict, source: str) -> list[dict]:
-    if run["nodes"][source]["status"] == "skipped":
+    state = run["nodes"][source]
+    if state["status"] == "skipped" or (
+        state["status"] != "completed" and "review_decision" not in state
+    ):
         return []
     edges = [e for e in workflow["edges"] if e["from"] == source]
     plain = [e for e in edges if not e.get("condition") and not e.get("fallback")]
@@ -32,8 +37,10 @@ def selected_edges(workflow: dict, run: dict, source: str) -> list[dict]:
             return run["nodes"][source].get("review_decision") == condition["equals"]
         return run["nodes"][condition["node"]].get("outcome") == condition["equals"]
 
+    if not conditioned:
+        return plain
     passed = [e for e in conditioned if matches(e)]
-    return plain + (passed if passed else [e for e in edges if e.get("fallback")])
+    return (passed if passed else [e for e in edges if e.get("fallback")]) + plain
 
 
 class Engine:
@@ -88,14 +95,24 @@ class Engine:
                 if state["status"] not in NODE_TERMINAL:
                     state.update(status="cancelled", finished_at=time.time())
 
-        return self.db.mutate_run(run_id, change, event={"type": "run_cancelled"})
+        return self.db.mutate_run(run_id, change, event={"type": "run_cancelled"}, invalidate=True)
 
-    def review(self, run_id: str, node_id: str, decision: str, note: str | None = None) -> dict:
+    def review(
+        self,
+        run_id: str,
+        node_id: str,
+        decision: str,
+        note: str | None = None,
+        *,
+        attempt_id: str | None = None,
+    ) -> dict:
         if decision not in REVIEWS:
             raise ValueError("decision must be approved, rejected or needs_changes")
         if note is not None and not isinstance(note, str):
             raise ValueError("note must be a string")
-        workflow = self.db.get_spec(run_id)
+        if attempt_id is not None and (not isinstance(attempt_id, str) or not attempt_id):
+            raise ValueError("attempt_id must be a non-empty string")
+        _, workflow, revision = self.db.execution(run_id)
         node = next((n for n in workflow["nodes"] if n["id"] == node_id), None)
         if not node or node["type"] != "human_review":
             raise ValueError("node is not a human review")
@@ -118,7 +135,11 @@ class Engine:
             run["status"] = "running"
 
         state = self.db.mutate_run(
-            run_id, change, event={"type": "review", "node_id": node_id, "decision": decision}
+            run_id,
+            change,
+            event={"type": "review", "node_id": node_id, "decision": decision},
+            revision=revision,
+            attempt=(node_id, attempt_id) if attempt_id is not None else None,
         )
         return {
             "run_id": run_id,
@@ -164,28 +185,138 @@ class Engine:
                 raise ConflictError("cannot retry an unselected branch; restart the whole run")
             for node in workflow["nodes"]:
                 if node["id"] in targets:
-                    run["nodes"][node["id"]] = _initial_node(node)
+                    iteration = run["nodes"][node["id"]].get("iteration", 0)
+                    run["nodes"][node["id"]] = {**_initial_node(node), "iteration": iteration}
             run.update(status="created", finished_at=None, workflow_version=workflow["version"])
             run.pop("error", None)
+            run.pop("finish_outcome", None)
+            run["loop_reentries"] = 0
 
         state = self.db.mutate_run(
-            run_id, change, event={"type": "run_retried", "node_id": node_id}, spec=workflow
+            run_id,
+            change,
+            event={"type": "run_retried", "node_id": node_id},
+            spec=workflow,
+            invalidate=True,
         )
         return state
 
     @staticmethod
     def _next_seq(run):
-        return max((s.get("seq", 0) for s in run["nodes"].values()), default=0) + 1
+        value = (
+            max(
+                run.get("completion_seq", 0),
+                max((s.get("seq", 0) for s in run["nodes"].values()), default=0),
+            )
+            + 1
+        )
+        run["completion_seq"] = value
+        return value
+
+    @staticmethod
+    def _reentries(run, workflow):
+        return {
+            edge["to"]
+            for node in workflow["nodes"]
+            for edge in selected_edges(workflow, run, node["id"])
+            if run["nodes"][edge["to"]]["status"] in NODE_TERMINAL
+            and (
+                run["nodes"][node["id"]].get("seq", 0) > run["nodes"][edge["to"]].get("seq", 0)
+                or node["id"] == edge["to"]
+            )
+        }
+
+    @staticmethod
+    def _finish(run, outcome, *, error=None):
+        now = time.time()
+        run.update(status="completed" if outcome == "success" else "failed", finished_at=now)
+        if error:
+            run["error"] = error
+        for state in run["nodes"].values():
+            if state["status"] not in NODE_TERMINAL:
+                state.update(
+                    status="skipped" if state["status"] == "pending" else "cancelled",
+                    finished_at=now,
+                )
 
     def _plan(self, run: dict, workflow: dict) -> list[str]:
         if run["status"] in TERMINAL:
             return []
         now = time.time()
-        graph = dependencies(workflow)
+        raw_graph, graph, _, _, _ = analyse(workflow)
         nodes = {n["id"]: n for n in workflow["nodes"]}
+        for name, node in nodes.items():
+            state = run["nodes"][name]
+            if (
+                node["type"] == "human_review"
+                and state["status"] == "waiting_for_review"
+                and "review_decision" in state
+            ):
+                state.update(status="completed", outcome="success", finished_at=now)
+                if "seq" not in state:
+                    state["seq"] = self._next_seq(run)
+        if any(state.get("abort_run") for state in run["nodes"].values()):
+            self._finish(run, "failure", error="node requested a hard workflow stop")
+            return []
+        resets = self._reentries(run, workflow)
+        # An already-routed finish wins over a simultaneously selected back
+        # edge. Otherwise resetting its parent could hide the finish token.
+        finishing = []
+        for name, node in nodes.items():
+            if node["type"] != "finish" or (
+                run["nodes"][name]["status"] != "pending" and name not in resets
+            ):
+                continue
+            if all(
+                run["nodes"][parent]["status"] in NODE_TERMINAL for parent in graph[name]
+            ) and any(
+                edge["to"] == name
+                for parent in raw_graph[name]
+                for edge in selected_edges(workflow, run, parent)
+            ):
+                finishing.append(name)
+        if finishing:
+            for name in finishing:
+                run["nodes"][name].update(
+                    status="completed",
+                    outcome=nodes[name].get("outcome", "success"),
+                    finished_at=now,
+                    seq=self._next_seq(run),
+                )
+            outcome = (
+                "failure"
+                if any(nodes[name].get("outcome") == "failure" for name in finishing)
+                else "success"
+            )
+            run["finish_outcome"] = outcome
+            self._finish(run, outcome)
+            return []
+        if resets:
+            limit = settings_module.values(self.db)["max_loop_reentries"]
+            for name in nodes:
+                if name not in resets:
+                    continue
+                state = run["nodes"][name]
+                executed = state["status"] != "skipped"
+                if executed:
+                    if run.get("loop_reentries", 0) >= limit:
+                        self._finish(run, "failure", error=f"loop re-entry limit ({limit}) reached")
+                        return []
+                    run["loop_reentries"] = run.get("loop_reentries", 0) + 1
+                run["nodes"][name] = {
+                    **_initial_node(nodes[name]),
+                    "iteration": state.get("iteration", 0) + int(executed),
+                }
+        # Old settled descendants need not wait on a parent that just re-entered
+        # a loop. Their completion is durable; only unfinished nodes join again.
+        graph = {
+            name: set() if run["nodes"][name]["status"] in NODE_TERMINAL else parents
+            for name, parents in graph.items()
+        }
         sorter = TopologicalSorter(graph)
         sorter.prepare()
         ready_work = []
+        finish_outcome = None
         while sorter.is_active():
             ready = sorter.get_ready()
             if not ready:
@@ -197,13 +328,13 @@ class Engine:
                     continue
                 if state["status"] != "pending":
                     continue
-                selected = not graph[name] or any(
+                selected = not raw_graph[name] or any(
                     e["to"] == name
-                    for parent in graph[name]
+                    for parent in raw_graph[name]
                     for e in selected_edges(workflow, run, parent)
                 )
                 if not selected:
-                    state.update(status="skipped", finished_at=now)
+                    state.update(status="skipped", finished_at=now, seq=self._next_seq(run))
                     sorter.done(name)
                 elif node["type"] in ("condition", "prompt", "finish"):
                     state.update(
@@ -213,15 +344,27 @@ class Engine:
                         seq=self._next_seq(run),
                     )
                     sorter.done(name)
+                    if node["type"] == "finish":
+                        finish_outcome = (
+                            "failure"
+                            if node.get("outcome") == "failure" or finish_outcome == "failure"
+                            else "success"
+                        )
                 elif node["type"] == "human_review":
                     state.update(status="waiting_for_review", started_at=now)
                 else:
                     ready_work.append(name)
         statuses = [s["status"] for s in run["nodes"].values()]
+        if finish_outcome is not None:
+            run["finish_outcome"] = finish_outcome
+            self._finish(run, finish_outcome)
+            return []
         if ready_work or any(s in ("scheduled", "running") for s in statuses):
             run["status"] = "running"
         elif "waiting_for_review" in statuses:
             run["status"] = "waiting"
+        elif self._reentries(run, workflow):
+            run["status"] = "running"
         else:
             failed = "pending" in statuses
             for name, state in run["nodes"].items():
@@ -239,14 +382,15 @@ class Engine:
                     workflow, run, name
                 ):
                     failed = True
-            run.update(status="failed" if failed else "completed", finished_at=now)
+            self._finish(run, "failure" if failed else "success")
         return ready_work
 
     async def drive(self, run_id: str, owner: str):
-        workflow = self.db.get_spec(run_id)
+        _, workflow, revision = self.db.execution(run_id, owner=owner)
         active: dict[str, asyncio.Task] = {}
         last_heartbeat = time.monotonic()
         try:
+            EffectStore(self.db).recover(run_id, owner=owner, revision=revision)
 
             def recover(run):
                 interrupted = []
@@ -269,7 +413,7 @@ class Engine:
                         finished_at=time.time(),
                     )
 
-            recovered = self.db.mutate_run(run_id, recover, owner=owner)
+            recovered = self.db.mutate_run(run_id, recover, owner=owner, revision=revision)
             # A retry can replace the spec immediately after recovery commits
             # a failure. This driver still holds the old spec: finish it using
             # the recovery snapshot so the next driver loads the retry's spec.
@@ -277,7 +421,7 @@ class Engine:
                 return
             while True:
                 if time.monotonic() - last_heartbeat >= 5:
-                    if not self.db.claim(run_id, owner):
+                    if not self.db.claim(run_id, owner, revision=revision):
                         break
                     last_heartbeat = time.monotonic()
                 ready = []
@@ -285,6 +429,7 @@ class Engine:
                     run_id,
                     lambda r, ready=ready: ready.extend(self._plan(r, workflow)),
                     owner=owner,
+                    revision=revision,
                 )
                 if state["status"] in TERMINAL:
                     break
@@ -301,12 +446,19 @@ class Engine:
                             run["nodes"][name].setdefault("wait_started_at", time.time())
 
                     state = self.db.mutate_run(
-                        run_id, begin, owner=owner, event={"type": "node_started", "node_id": name}
+                        run_id,
+                        begin,
+                        owner=owner,
+                        revision=revision,
+                        event={"type": "node_started", "node_id": name},
                     )
                     if state["status"] in TERMINAL:
                         break
                     node = next(n for n in workflow["nodes"] if n["id"] == name)
-                    active[name] = asyncio.create_task(self._execute(run_id, owner, node, workflow))
+                    attempt_id = state["nodes"][name]["attempt_id"]
+                    active[name] = asyncio.create_task(
+                        self._execute(run_id, owner, node, workflow, revision, attempt_id)
+                    )
                 if state["status"] == "waiting" and not active:
                     break
                 if active:
@@ -324,37 +476,37 @@ class Engine:
             await asyncio.gather(*active.values(), return_exceptions=True)
             self.db.release(run_id, owner)
 
-    async def _execute(self, run_id: str, owner: str, raw: dict, workflow: dict):
-        run = self.db.get_run(run_id)
+    async def _execute(
+        self, run_id: str, owner: str, raw: dict, workflow: dict, revision, attempt_id
+    ):
+        run, _, _ = self.db.execution(run_id, owner=owner, revision=revision)
+        if run["nodes"][raw["id"]].get("attempt_id") != attempt_id:
+            raise ConflictError("node attempt was superseded")
         try:
             node = copy.deepcopy(raw)
             node.setdefault("profile", workflow.get("defaults", {}).get("profile"))
             if workflow.get("defaults", {}).get("model"):
                 node.setdefault("model", workflow["defaults"]["model"])
-            for key in ("prompt", "command", "workdir"):
+            for key in ("command", "workdir"):
                 if key in node:
                     node[key] = resolve(node[key], run)
             if node.get("wait_for"):
                 node["wait_for"] = {k: resolve(v, run) for k, v in node["wait_for"].items()}
             if node["type"] == "agent_task":
                 graph = dependencies(workflow)
-                ancestors, pending = set(), list(graph[node["id"]])
-                while pending:
-                    name = pending.pop()
-                    if name not in ancestors:
-                        ancestors.add(name)
-                        pending.extend(graph[name])
+                lineage = ancestors(graph, node["id"])
                 directives = [run["input"]] if run.get("input") else []
                 directives += [
                     resolve(n.get("prompt", ""), run)
                     for n in workflow["nodes"]
-                    if n["id"] in ancestors
+                    if n["id"] in lineage
                     and n["type"] == "prompt"
                     and run["nodes"][n["id"]]["status"] == "completed"
                 ]
                 inputs = {
                     key: resolve(value, run) for key, value in node.get("input_mapping", {}).items()
                 }
+                node["prompt"] = resolve(node["prompt"], run, inputs)
                 if directives:
                     node["prompt"] = (
                         "Operator instructions:\n"
@@ -362,7 +514,7 @@ class Engine:
                         + "\n\nStep instructions:\n"
                         + node["prompt"]
                     )
-                if inputs:
+                if inputs and any("{{" + key + "}}" not in raw["prompt"] for key in inputs):
                     node["prompt"] += "\n\nInputs:\n" + json.dumps(inputs, ensure_ascii=False)
             config = settings_module.values(self.db)
             retries = node.get("max_retries", workflow.get("defaults", {}).get("max_retries", 0))
@@ -388,6 +540,25 @@ class Engine:
                 )
                 if result.outcome != "failure" or not transient or attempt == retries:
                     break
+                run = self.db.mutate_run(
+                    run_id,
+                    lambda state: state["nodes"][raw["id"]].update(
+                        status="running", started_at=time.time()
+                    ),
+                    owner=owner,
+                    revision=revision,
+                    attempt=(raw["id"], attempt_id),
+                    restart_attempts={
+                        raw["id"]: {
+                            "outcome": result.outcome,
+                            "output": result.output,
+                            "error": result.error,
+                            "telemetry": result.telemetry,
+                        }
+                    },
+                    event={"type": "node_retry", "node_id": raw["id"]},
+                )
+                attempt_id = run["nodes"][raw["id"]]["attempt_id"]
                 await asyncio.sleep(min(2**attempt, 30))
         except Exception as exc:
             result = Result("failure", error=f"{type(exc).__name__}: {exc}")
@@ -412,5 +583,7 @@ class Engine:
             run_id,
             settle,
             owner=owner,
+            revision=revision,
+            attempt=(raw["id"], attempt_id),
             event={"type": "node_completed", "node_id": raw["id"], "outcome": result.outcome},
         )

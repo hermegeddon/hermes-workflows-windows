@@ -8,10 +8,10 @@ import math
 import re
 import threading
 import uuid
-from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 
 from .db import ConflictError, hermes_home
+from .graph import analyse, ancestors, predecessors
 
 SLUG = re.compile(r"[A-Za-z0-9_-]+\Z")
 REF = re.compile(
@@ -41,10 +41,7 @@ def parse_document(text: str) -> dict:
 
 
 def dependencies(workflow: dict) -> dict[str, set[str]]:
-    graph = {n["id"]: set() for n in workflow["nodes"]}
-    for edge in workflow["edges"]:
-        graph[edge["to"]].add(edge["from"])
-    return graph
+    return predecessors(workflow)
 
 
 def validate(workflow: dict) -> dict:
@@ -175,6 +172,28 @@ def validate(workflow: dict) -> dict:
                 "invalid_input_mapping",
                 f"'{name}' input_mapping must map names to reference strings",
             )
+        elif kind == "agent_task":
+            for key, ref in mapping.items():
+                match = REF.fullmatch(ref)
+                if (
+                    not isinstance(key, str)
+                    or not SLUG.fullmatch(key)
+                    or not match
+                    or not ref.startswith("{{nodes.")
+                ):
+                    err(
+                        "invalid_input_mapping",
+                        f"'{name}' input_mapping needs named node-channel references",
+                    )
+                elif ".review_note" in ref:
+                    source = match[1].split(".")[1]
+                    if any(
+                        n.get("id") == source and n.get("type") != "human_review" for n in nodes
+                    ):
+                        err(
+                            "review_note_source",
+                            f"'{name}' review_note source must be a human_review",
+                        )
     safe_edges = []
     for edge in edges:
         if (
@@ -219,22 +238,23 @@ def validate(workflow: dict) -> dict:
         if "fallback" in edge and type(edge["fallback"]) is not bool:
             err("invalid_fallback", "fallback must be boolean")
     if len(seen) == len(nodes) and nodes:
-        graph = dependencies({"nodes": nodes, "edges": safe_edges})
-        try:
-            tuple(TopologicalSorter(graph).static_order())
-        except CycleError:
-            err("cycle", "Python DAG workflows cannot contain cycles")
-        roots = [name for name, deps in graph.items() if not deps]
+        graph, _, feedback, roots, reachable = analyse({"nodes": nodes, "edges": safe_edges})
+        if feedback:
+            warnings.append(
+                {
+                    "level": "warning",
+                    "code": "cycle",
+                    "message": "Workflow contains a cycle; loop re-entries are bounded by max_loop_reentries.",
+                }
+            )
+            if not any(n.get("type") == "finish" for n in nodes):
+                err("no_finish", "cyclic workflows require a finish node")
         if len(roots) != 1:
             err("entry_count", "exactly one entry node is required")
-        ancestors = {}
-        try:
-            for name in TopologicalSorter(graph).static_order():
-                ancestors[name] = set(graph[name])
-                for parent in graph[name]:
-                    ancestors[name].update(ancestors[parent])
-        except CycleError:
-            pass
+        lineage = {name: ancestors(graph, name) for name in graph}
+        if len(roots) == 1:
+            for name in graph.keys() - reachable:
+                err("unreachable_node", f"'{name}' is unreachable from the entry node")
         params = workflow.get("params", [])
         param_names = (
             {
@@ -251,7 +271,7 @@ def validate(workflow: dict) -> dict:
                 err("finish_has_outgoing", f"finish '{name}' must be terminal")
             for match in REF.finditer(json.dumps(node)):
                 parts = match[1].split(".")
-                if parts[0] == "nodes" and parts[1] not in ancestors.get(name, set()):
+                if parts[0] == "nodes" and parts[1] not in lineage.get(name, set()):
                     err(
                         "invalid_input_ref",
                         f"'{name}' references a node that is not an ancestor: {parts[1]}",
@@ -264,7 +284,7 @@ def validate(workflow: dict) -> dict:
                 isinstance(c, dict)
                 and c.get("type") == "node_status"
                 and isinstance(c.get("node"), str)
-                and c.get("node") not in ancestors.get(edge["from"], set()) | {edge["from"]}
+                and c.get("node") not in lineage.get(edge["from"], set()) | {edge["from"]}
             ):
                 err(
                     "invalid_condition_ref", "condition node must be the edge source or an ancestor"
@@ -353,16 +373,22 @@ def fill_params(workflow: dict, supplied: dict, *, require=True) -> dict:
     return values
 
 
-def resolve(text: str, run: dict) -> str:
+def resolve(text: str, run: dict, inputs: dict | None = None) -> str:
     def replacement(match):
         parts = match[1].split(".")
         if parts[0] == "params":
-            value = run.get("params", {}).get(parts[1], "")
+            if parts[1] not in run.get("params", {}):
+                raise ValueError(f"run has no value for param '{parts[1]}'")
+            value = run["params"][parts[1]]
+        elif parts[0] != "nodes":
+            return inputs.get(parts[0], match[0]) if inputs else match[0]
         else:
             state = run["nodes"][parts[1]]
-            if state["status"] == "skipped":
-                raise ValueError(f"reference to skipped node '{parts[1]}'")
-            value = state.get(parts[2], "")
+            if state["status"] != "completed" or parts[2] not in state or state[parts[2]] is None:
+                raise ValueError(
+                    f"node '{parts[1]}' has no available {parts[2]} in its current iteration"
+                )
+            value = state[parts[2]]
             if len(parts) > 3:
                 if isinstance(value, str):
                     value = json.loads(value)
@@ -370,6 +396,17 @@ def resolve(text: str, run: dict) -> str:
                     value = value[part]
         return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
+    # One pass over authored text: injected outputs containing another token
+    # must never be interpreted as a second instruction/substitution.
+    if inputs:
+        pattern = re.compile(REF.pattern + r"|\{\{([A-Za-z0-9_-]+)\}\}")
+
+        def combined(match):
+            if match[1] is None:
+                return inputs.get(match[2], match[0])
+            return replacement(match)
+
+        return pattern.sub(combined, text)
     return REF.sub(replacement, text)
 
 
@@ -491,13 +528,13 @@ def compile_preview(workflow: dict) -> dict:
                     },
                 }
             )
-    graph = dependencies(workflow)
+    _, _, _, roots, _ = analyse(workflow)
     trigger = workflow["trigger"]
     result = {
         "workflow_id": workflow["id"],
         "scope": workflow["scope"],
         "trigger": trigger,
-        "first_node": next(iter(TopologicalSorter(graph).static_order())),
+        "first_node": roots[0],
         "kanban_tasks": tasks,
         "script_steps": [
             {

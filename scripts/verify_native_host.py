@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import site
 import sys
 import tempfile
@@ -43,6 +44,11 @@ def host_contract(plugin: Path) -> dict:
 
     with tempfile.TemporaryDirectory(prefix="workflow native contract ") as temporary:
         home = Path(temporary)
+        # Discovery deduplicates by plugin name. Isolate the selected package so
+        # an adjacent upstream checkout cannot be mistaken for this backend.
+        selected = home / "plugins" / "hermes-workflows"
+        shutil.copytree(plugin, selected, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        plugin = selected
         token = set_hermes_home_override(home)
         manager = None
         try:
@@ -126,6 +132,84 @@ def host_contract(plugin: Path) -> dict:
                     ).status_code == 200
                     assert (await client.get(base + "/settings")).status_code == 200
 
+                    loop = {
+                        "id": "native-loop",
+                        "name": "Native loop",
+                        "version": 1,
+                        "scope": {"type": "global"},
+                        "trigger": {"type": "manual"},
+                        "nodes": [
+                            {"id": "start", "type": "prompt"},
+                            {"id": "review", "type": "human_review"},
+                            {"id": "again", "type": "condition"},
+                            {"id": "done", "type": "finish"},
+                        ],
+                        "edges": [
+                            {"from": "start", "to": "review"},
+                            {
+                                "from": "review",
+                                "to": "again",
+                                "condition": {"type": "review_status", "equals": "needs_changes"},
+                            },
+                            {"from": "again", "to": "review"},
+                            {
+                                "from": "review",
+                                "to": "done",
+                                "condition": {"type": "review_status", "equals": "approved"},
+                            },
+                        ],
+                    }
+                    response = await client.post(base + "/workflows", json={"workflow": loop})
+                    assert response.status_code == 200, response.text
+                    response = await client.post(base + "/workflows/native-loop/run", json={})
+                    assert response.status_code == 200, response.text
+                    loop_id = response.json()["run_id"]
+
+                    async def wait_loop(predicate):
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline:
+                            response = await client.get(base + "/runs/" + loop_id)
+                            assert response.status_code == 200, response.text
+                            data = response.json()
+                            if predicate(data):
+                                return data
+                            await asyncio.sleep(0.03)
+                        raise AssertionError(data)
+
+                    first = await wait_loop(lambda run: run["status"] == "waiting")
+                    old_token = first["nodes"]["review"]["attempt_id"]
+                    review_url = base + "/runs/" + loop_id + "/review"
+                    response = await client.post(
+                        review_url,
+                        json={
+                            "node_id": "review",
+                            "decision": "needs_changes",
+                            "attempt_id": old_token,
+                        },
+                    )
+                    assert response.status_code == 200, response.text
+                    second = await wait_loop(
+                        lambda run: (
+                            run["status"] == "waiting"
+                            and run["nodes"]["review"].get("attempt_id") != old_token
+                        )
+                    )
+                    response = await client.post(
+                        review_url,
+                        json={"node_id": "review", "decision": "approved", "attempt_id": old_token},
+                    )
+                    assert response.status_code == 409, response.text
+                    response = await client.post(
+                        review_url,
+                        json={
+                            "node_id": "review",
+                            "decision": "approved",
+                            "attempt_id": second["nodes"]["review"]["attempt_id"],
+                        },
+                    )
+                    assert response.status_code == 200, response.text
+                    await wait_loop(lambda run: run["status"] == "completed")
+
             asyncio.run(check_routes())
             manager.unload(manifest_key(manifest))
             assert not runtime.thread.is_alive()
@@ -135,6 +219,7 @@ def host_contract(plugin: Path) -> dict:
                 "unload": "passed",
                 "native_dashboard_mount": "passed",
                 "dashboard_run_review": "passed",
+                "dashboard_loop_review": "passed",
             }
         finally:
             if manager is not None:
@@ -219,9 +304,20 @@ def main():
     parser.add_argument("--plugin", type=Path, default=home / "plugins" / "hermes-workflows")
     parser.add_argument("--live-agent", action="store_true")
     parser.add_argument("--agent-preflight", action="store_true")
+    parser.add_argument(
+        "--capabilities", action="store_true", help="probe native APIs without running workflows"
+    )
     args = parser.parse_args()
     activate(args.hermes_source)
     sys.path.insert(0, str(args.plugin.resolve()))
+    if args.capabilities:
+        from hermes_cli.plugins import PluginContext
+        from hermes_workflows.native import NativeHost
+
+        with tempfile.TemporaryDirectory(prefix="workflow native capabilities ") as temporary:
+            report = NativeHost(Path(temporary), context=PluginContext).probe()
+        print(json.dumps(report, indent=2))
+        return
     report = host_contract(args.plugin)
     print(json.dumps(report), flush=True)
     if args.agent_preflight:

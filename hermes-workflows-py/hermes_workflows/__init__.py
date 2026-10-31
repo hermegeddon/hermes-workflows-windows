@@ -42,6 +42,10 @@ TOOL_SCHEMAS = {
             "node_id": _string(),
             "decision": {"type": "string", "enum": ["approved", "rejected", "needs_changes"]},
             "note": _string(),
+            "attempt_id": {
+                "type": "string",
+                "description": "The displayed review attempt_id from workflow_status; rejects stale decisions.",
+            },
         },
         ("run_id", "node_id", "decision"),
     ),
@@ -161,7 +165,7 @@ def register(ctx):
         "workflow_run": "Start a workflow by id; poll workflow_status for progress.",
         "workflow_status": "Get full workflow run state, including per-node outcomes.",
         "workflow_explain": "Preview a workflow's steps without running it.",
-        "workflow_review": "Resolve a waiting human review gate and advance the run.",
+        "workflow_review": "Resolve a waiting human review gate and advance the run. Pass its attempt_id from workflow_status to fence the decision to that iteration.",
     }
     for name, schema in TOOL_SCHEMAS.items():
         ctx.register_tool(

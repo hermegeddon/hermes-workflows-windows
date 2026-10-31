@@ -92,6 +92,8 @@ class Runtime:
                     if task.done():
                         try:
                             task.result()
+                        except ConflictError:
+                            log.debug("workflow driver was superseded: %s", run_id)
                         except Exception:
                             log.exception("workflow driver failed: %s", run_id)
                         del tasks[run_id]
@@ -101,8 +103,12 @@ class Runtime:
                     state = self.db.get_run(run_id)
                     if state["status"] == "waiting":
                         continue
-                    if self.db.claim(run_id, self.owner):
-                        tasks[run_id] = asyncio.create_task(self.engine.drive(run_id, self.owner))
+                    # A process can drive several successive revisions. A new
+                    # token prevents an old driver's finally/release from
+                    # clearing a replacement driver's lease in the same process.
+                    owner = f"{self.owner}:{uuid.uuid4().hex}"
+                    if self.db.claim(run_id, owner):
+                        tasks[run_id] = asyncio.create_task(self.engine.drive(run_id, owner))
                 if time.monotonic() - last_schedules >= 1:
                     try:
                         await asyncio.to_thread(self.tick_schedules)

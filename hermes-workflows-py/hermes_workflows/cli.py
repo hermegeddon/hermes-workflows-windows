@@ -40,6 +40,7 @@ def main(argv=None):
     review.add_argument("node_id")
     review.add_argument("decision", choices=("approved", "rejected", "needs_changes"))
     review.add_argument("--note")
+    review.add_argument("--attempt-id", help="decide only the displayed review attempt")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     runtime = None
@@ -97,7 +98,12 @@ def main(argv=None):
             status, result = api.handle(
                 "POST",
                 f"/runs/{args.run_id}/review",
-                {"node_id": args.node_id, "decision": args.decision, "note": args.note},
+                {
+                    "node_id": args.node_id,
+                    "decision": args.decision,
+                    "note": args.note,
+                    "attempt_id": args.attempt_id,
+                },
             )
         elif args.command == "retry":
             status, result = api.handle(

@@ -6,9 +6,12 @@ import json
 import os
 import sqlite3
 import time
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
+
+from .migrations import migrate
 
 ACTIVE = ("created", "running", "waiting")
 TERMINAL = ("completed", "failed", "cancelled")
@@ -37,27 +40,8 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as con:
             con.execute("PRAGMA journal_mode=WAL")
-            con.executescript("""
-                CREATE TABLE IF NOT EXISTS py_metadata (version INTEGER NOT NULL);
-                INSERT INTO py_metadata SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM py_metadata);
-                CREATE TABLE IF NOT EXISTS py_runs (
-                    run_id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL,
-                    status TEXT NOT NULL, state TEXT NOT NULL, spec TEXT NOT NULL,
-                    started_at REAL NOT NULL, lease_owner TEXT, lease_until REAL NOT NULL DEFAULT 0
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS py_single_active_run ON py_runs(workflow_id)
-                    WHERE status IN ('created','running','waiting');
-                CREATE INDEX IF NOT EXISTS py_runs_recent ON py_runs(started_at DESC);
-                CREATE TABLE IF NOT EXISTS py_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,
-                    at REAL NOT NULL, event TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS py_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS py_schedules (
-                    id TEXT PRIMARY KEY, workflow_id TEXT UNIQUE NOT NULL, data TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS py_exports (cache_key TEXT PRIMARY KEY, content TEXT NOT NULL);
-            """)
+        with self.connect(write=True) as con:
+            migrate(con)
 
     @contextmanager
     def connect(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
@@ -79,6 +63,7 @@ class Database:
             con.close()
 
     def create_run(self, state: dict, spec: dict, max_active: int = 4) -> dict:
+        state = {**state, "execution_revision": 0}
         with self.connect(write=True) as con:
             count = con.execute(
                 "SELECT count(*) FROM py_runs WHERE status IN ('created','running','waiting')"
@@ -125,6 +110,27 @@ class Database:
             raise KeyError("run not found")
         return json.loads(row[0])
 
+    @staticmethod
+    def _owned_row(con, run_id, owner=None, revision=None, attempt=None):
+        row = con.execute("SELECT * FROM py_runs WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            raise KeyError("run not found")
+        if owner is not None and (row["lease_owner"] != owner or row["lease_until"] < time.time()):
+            raise ConflictError("run lease lost")
+        if revision is not None and row["revision"] != revision:
+            raise ConflictError("run execution was superseded")
+        if attempt is not None:
+            state = json.loads(row["state"])["nodes"].get(attempt[0], {})
+            if state.get("attempt_id") != attempt[1]:
+                raise ConflictError("node attempt was superseded")
+        return row
+
+    def execution(self, run_id, *, owner=None, revision=None):
+        """Read the state, immutable spec and revision from one SQLite snapshot."""
+        with self.connect() as con:
+            row = self._owned_row(con, run_id, owner, revision)
+            return json.loads(row["state"]), json.loads(row["spec"]), row["revision"]
+
     def mutate_run(
         self,
         run_id: str,
@@ -133,23 +139,31 @@ class Database:
         event: dict | None = None,
         spec: dict | None = None,
         owner: str | None = None,
+        revision: int | None = None,
+        attempt: tuple[str, str] | None = None,
+        invalidate: bool = False,
+        restart_attempts: dict[str, dict] | None = None,
     ) -> dict:
         with self.connect(write=True) as con:
-            row = con.execute(
-                "SELECT state,lease_owner,lease_until FROM py_runs WHERE run_id=?", (run_id,)
-            ).fetchone()
-            if row is None:
-                raise KeyError("run not found")
-            if owner and (row[1] != owner or row[2] < time.time()):
-                raise ConflictError("run lease lost")
-            state = json.loads(row[0])
+            row = self._owned_row(con, run_id, owner, revision, attempt)
+            state = json.loads(row["state"])
             before = json.dumps(state)
             change(state)
+            changed = json.dumps(state) != before or spec is not None
+            revoked = invalidate and changed
+            next_revision = row["revision"] + int(revoked)
+            if revoked:
+                state["execution_revision"] = next_revision
+            self._sync_attempts(
+                con, json.loads(before), state, next_revision, restart_attempts or {}
+            )
             encoded = json.dumps(state)
             try:
                 con.execute(
-                    "UPDATE py_runs SET status=?,state=? WHERE run_id=?",
-                    (state["status"], encoded, run_id),
+                    "UPDATE py_runs SET status=?,state=?,revision=?,"
+                    "lease_owner=CASE WHEN ? THEN NULL ELSE lease_owner END,"
+                    "lease_until=CASE WHEN ? THEN 0 ELSE lease_until END WHERE run_id=?",
+                    (state["status"], encoded, next_revision, revoked, revoked, run_id),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ConflictError("workflow already has another active run") from exc
@@ -161,6 +175,112 @@ class Database:
                 )
         return state
 
+    def _sync_attempts(self, con, before, run, revision, restarts):
+        now = time.time()
+        for node_id, state in run["nodes"].items():
+            old = before["nodes"].get(node_id, {})
+            if old == state and node_id not in restarts:
+                continue
+            if (
+                state["status"] == "cancelled"
+                and old.get("status") == "pending"
+                and not old.get("attempt_id")
+            ):
+                # Cancelling an unstarted branch is not an execution attempt.
+                continue
+            if node_id in restarts and old.get("attempt_id"):
+                archived = {**old, **restarts[node_id], "status": "completed", "finished_at": now}
+                con.execute(
+                    "UPDATE py_attempts SET status='completed',data=?,updated_at=? WHERE attempt_id=?",
+                    (json.dumps(archived), now, old["attempt_id"]),
+                )
+                for key in ("attempt_id", "outcome", "output", "error", "telemetry", "finished_at"):
+                    state.pop(key, None)
+            if state["status"] in ("pending", "skipped"):
+                if old.get("attempt_id") and old["status"] not in NODE_TERMINAL:
+                    archived = {**old, "status": "interrupted", "finished_at": now}
+                    con.execute(
+                        "UPDATE py_attempts SET status='interrupted',data=?,updated_at=? WHERE attempt_id=?",
+                        (json.dumps(archived), now, old["attempt_id"]),
+                    )
+                continue
+            iteration = state.get("iteration", 0)
+            identity = state.get("attempt_id")
+            # A legacy active node has a backfilled history row but no added
+            # fields in its original JSON. Adopt that row only when it changes.
+            if (
+                not identity
+                and old.get("status") not in (None, "pending", "skipped")
+                and node_id not in restarts
+            ):
+                legacy = con.execute(
+                    "SELECT attempt_id,attempt FROM py_attempts WHERE run_id=? AND node_id=? "
+                    "AND iteration=? ORDER BY attempt DESC LIMIT 1",
+                    (run["run_id"], node_id, iteration),
+                ).fetchone()
+                if legacy:
+                    identity, state["attempt"] = legacy
+            if not identity or old.get("status") == "pending":
+                identity = uuid.uuid4().hex
+                number = con.execute(
+                    "SELECT COALESCE(MAX(attempt),0)+1 FROM py_attempts WHERE run_id=? AND node_id=? AND iteration=?",
+                    (run["run_id"], node_id, iteration),
+                ).fetchone()[0]
+                state["attempt"] = number
+                con.execute(
+                    "INSERT INTO py_attempts VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        identity,
+                        run["run_id"],
+                        node_id,
+                        revision,
+                        iteration,
+                        number,
+                        state["status"],
+                        "{}",
+                        None,
+                        now,
+                        now,
+                    ),
+                )
+            state.update(attempt_id=identity, iteration=iteration)
+            con.execute(
+                "UPDATE py_attempts SET status=?,data=?,updated_at=? WHERE attempt_id=? AND run_id=? AND node_id=?",
+                (state["status"], json.dumps(state), now, identity, run["run_id"], node_id),
+            )
+
+    def attempts(self, run_id: str) -> list[dict]:
+        self.get_run(run_id)
+        with self.connect() as con:
+            rows = con.execute(
+                "SELECT * FROM py_attempts WHERE run_id=? ORDER BY node_id,iteration,attempt",
+                (run_id,),
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "data": json.loads(row["data"]),
+                "handle": json.loads(row["handle"]) if row["handle"] else None,
+            }
+            for row in rows
+        ]
+
+    def attach_attempt_handle(self, run_id, node_id, attempt_id, handle, *, owner, revision):
+        with self.connect(write=True) as con:
+            self._owned_row(con, run_id, owner, revision, (node_id, attempt_id))
+            row = con.execute(
+                "SELECT handle FROM py_attempts WHERE attempt_id=?", (attempt_id,)
+            ).fetchone()
+            encoded = json.dumps(handle, sort_keys=True)
+            if row is None:
+                raise KeyError("attempt not found")
+            if row[0] is not None and row[0] != encoded:
+                raise ConflictError("attempt already has a different external handle")
+            con.execute(
+                "UPDATE py_attempts SET handle=?,updated_at=? WHERE attempt_id=?",
+                (encoded, time.time(), attempt_id),
+            )
+
     def active_ids(self) -> list[str]:
         with self.connect() as con:
             return [
@@ -170,14 +290,15 @@ class Database:
                 )
             ]
 
-    def claim(self, run_id: str, owner: str, seconds: float = 30) -> bool:
+    def claim(self, run_id: str, owner: str, seconds: float = 30, *, revision=None) -> bool:
         now = time.time()
         with self.connect(write=True) as con:
             return (
                 con.execute(
                     "UPDATE py_runs SET lease_owner=?,lease_until=? WHERE run_id=? "
-                    "AND (lease_owner=? OR lease_until<?) AND status IN ('created','running','waiting')",
-                    (owner, now + seconds, run_id, owner, now),
+                    "AND (lease_owner=? OR lease_until<?) AND status IN ('created','running','waiting') "
+                    "AND (? IS NULL OR revision=?)",
+                    (owner, now + seconds, run_id, owner, now, revision, revision),
                 ).rowcount
                 == 1
             )

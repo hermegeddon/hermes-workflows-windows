@@ -1,6 +1,6 @@
 # Hermes Workflows Python
 
-This plugin runs workflow DAGs on Python 3.11+ on Windows 11. Its engine, SQLite
+This plugin runs workflow graphs on Python 3.11+ on Windows 11. Its engine, SQLite
 storage, scheduler, CLI, and HTTP sidecar use the standard library. There is no Bun
 or Node.js runtime dependency. Original React dashboard assets are preserved from
 upstream commit `352e5ffb751e4798e66dcdf1dbe9a80dff768c0f`; maintained web and native
@@ -186,12 +186,43 @@ active run per workflow; configurable limits bound active runs and concurrent
 steps. Run leases prevent separate gateway and dashboard processes from driving
 the same run simultaneously.
 
-The engine uses `graphlib.TopologicalSorter` and concurrent asyncio tasks. A
-workflow has exactly one entry. A join waits for all predecessors to settle and
-runs if at least one incoming branch was selected; unselected branches become
-`skipped`. Edges support `node_status`, `review_status`, and fallback routing.
-Cycles fail validation. Explicit `finish` outcomes determine terminal success or
-failure; a failed work node with no selected outgoing edge fails the run.
+The engine uses `graphlib.TopologicalSorter` for forward dependencies and
+concurrent asyncio tasks. A workflow has exactly one entry. DFS identifies
+feedback edges so loops can re-enter an earlier step without waiting for that
+feedback edge on the first pass. Forward joins retain the all-parent barrier:
+all forward predecessors settle, and at least one incoming branch must be
+selected. Unselected branches become `skipped`. Edges support `node_status`,
+`review_status`, and fallback routing (a fallback is used when conditional
+siblings exist and none match). An explicit `finish` settles the whole run and
+cancels remaining active work. A work failure with no selected outgoing edge
+fails the run. Existing acyclic workflows without a finish keep implicit completion.
+
+### Conditional loops
+
+Cycles validate with a warning, require a distinct entry and reachable finish,
+and re-enter when a newer completion or review decision routes back to a settled
+node. Each execution gets a fresh iteration/attempt identity. Prior outputs,
+review decisions/notes and wait deadlines are cleared from the current node;
+attempt history remains available in storage. Self-loops are supported too.
+
+`max_loop_reentries` in Settings defaults to **100 total node re-entries per run**.
+Exhausting it fails the run with an explicit error. An operator's explicit retry
+resets this budget. It is separate from an agent's `max_iterations` turn limit.
+
+For a free example, import [`examples/review-loop.workflow.json`](examples/review-loop.workflow.json),
+enable script execution in Settings, and click Play. **Request changes** runs the
+shell step again and presents a fresh review; **Approve** completes it and
+**Reject** fails it. This workflow makes no model requests.
+
+Both maintained dashboards submit the displayed review's `attempt_id`. A delayed
+request for an older iteration returns 409; a fast loop cannot hide the next
+gate through polling/acknowledgement races. Legacy API clients may omit the token
+and continue to act on the current gate. The `workflow_review` tool accepts the
+same token; the standalone CLI accepts `review ... --attempt-id TOKEN`.
+Channel values must exist in the current
+source node state: unresolved inputs fail explicitly. `input_mapping` substitutes
+named `{{placeholders}}` once; inserted output is never re-interpreted as another
+template. Legacy mappings without local placeholders keep their Inputs block.
 
 Supported nodes are `agent_task`, `script`, `prompt`, `condition`, `human_review`,
 `finish`, and `wait`. Typed parameters use upstream's `text`, `enum`, `int`, and
@@ -261,17 +292,49 @@ epoch-second timestamps, summaries, validation issues, compile plans, and downlo
 envelopes match the pinned dashboard. Errors use `{"detail":"..."}` with 400,
 404, 405, or 409 status codes. Workflow creation returns 200, matching upstream.
 Starting a run returns immediately with `run_id` and `status`; poll the run for
-progress. A review body contains `node_id`, `decision`, and optional `note`.
+progress. A review body contains `node_id`, `decision`, optional `note`, and an
+optional `attempt_id` to fence the decision to the exact displayed review.
 `retry` accepts optional `node_id`; omitting it resets the full run.
 
 ## Compatibility boundaries
+
+The execution foundation now stores a run revision and separate node-attempt
+history, including iteration/attempt identities and durable external handles.
+Cancelling or retrying a run revokes its previous driver lease; obsolete worker
+results cannot overwrite a newer attempt. Transient agent retries retain their
+individual outcomes. The current dashboard continues to read the latest node
+state in `run.nodes`.
+
+Database schema 2 migrates schema 1 transactionally on startup, preserving run
+and spec snapshots, logs, settings, schedules and cached exports. Stop older
+gateway/CLI processes before upgrading, then restart with the updated plugin;
+do not run different backend versions against the same profile database. A newer
+unknown schema is rejected. Tests cover rollback and simultaneous process startup.
+
+The external-effect journal persists intent before an integration acts. An
+operation left in flight by a lost driver becomes `unknown` and requires explicit
+reconciliation, including when its receipt was lost. It is never automatically
+sent again. This foundation does not yet enable Kanban, delivery or memory writes.
+
+Native adapter availability can be inspected without executing workflows:
+
+```powershell
+& $Python .\scripts\verify_native_host.py --capabilities
+```
+
+The probe uses a temporary profile context, does not change `HERMES_HOME`, and
+reports API signatures without invoking operations. Both the installed Windows
+host and `mithraeum` exposed the candidate Kanban, dispatcher, worktree, cron,
+config, delivery and hook APIs during verification. A headless probe has no live
+delivery router; API availability is not a claim that those integrations execute
+in this backend yet.
 
 The dashboard's current client routes are implemented, but the Python backend
 does not reproduce every upstream integration. Agent tasks execute directly
 without creating Kanban cards. Card adoption, stacked releases, and managed
 worktree nodes fail validation; use explicit `workdir` paths for direct execution.
-This DAG engine does not execute upstream loop edges. Workflow result delivery
-and OpenSecondBrain writes are not implemented. The O2B badge reports local
+Conditional loop edges are implemented. Workflow result delivery and
+OpenSecondBrain writes are not implemented. The O2B badge reports local
 installation/configuration only. Event triggers remain declarative, as upstream;
 an external system can start a run through the run route.
 
@@ -281,6 +344,15 @@ need conversion to URLs. Template export produces a cached offline spec and
 adaptation guide; it does not call an LLM to de-bind installation-specific values.
 Settings are persisted in this backend's SQLite store, independently of Hermes'
 `config.yaml`; the returned schema lists the implemented settings.
+
+Two deliberate graph compatibility choices remain: forward joins wait for all
+parents (the pinned upstream core activates on any incoming route), and re-entered
+reviews clear the previous decision (the pinned core retains it). These preserve
+existing join behavior and require an actual new approval. Reference decisions
+are recorded in `tests/fixtures/loop-reference.json` with the upstream commit and
+source hash. Contributors can regenerate them with
+`node --experimental-strip-types scripts/generate_loop_reference.mjs` against the
+pinned `.upstream` checkout. Runtime and Python tests do not invoke Node or Bun.
 
 The native Windows suite covers the API, actual CMD and Windows PowerShell,
 Unicode paths/output, process-tree timeouts, reviews and recovery, parallel joins,
