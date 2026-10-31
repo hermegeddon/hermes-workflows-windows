@@ -108,8 +108,12 @@ The selected gateway and profile determine the backend; that profile must have
 the Python plugin enabled. Switching either resets the view and rejects stale
 requests. A disconnected gateway shows a waiting state. Navigation stays inside
 the Workflows view without overwriting Desktop's router. Styles are removed on
-disable. Remote gateway scoping is regression-tested with SDK fixtures; live
-verification was performed against the local default profile.
+disable. Live verification covered Windows local/default, a separate Windows
+`workflow-qa` profile, and a registered SSH gateway running macOS/default.
+Identical workflow IDs in the QA profile and remote gateway kept independent
+specifications and run histories through gateway/profile switches, cancellation,
+retry, and review approval. SDK fixtures also cover stale requests and late
+responses during scope changes.
 
 For a free smoke test, open an existing manual human-review → finish workflow,
 click **Play**, cancel the waiting run, retry it, and approve its review. The run
