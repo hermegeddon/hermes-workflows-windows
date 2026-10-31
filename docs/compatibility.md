@@ -98,6 +98,14 @@ loader tests, typechecking, Ruff and both production builds. The CI asset verifi
 adds five corruption/path/size checks. These counts document this assessment's
 baseline, not a permanent test-count requirement.
 
+Hosted CI subsequently exposed a recovery/retry interleaving (hwp-6pu.18): an
+old driver could continue with its old spec after recovery committed a failure
+and a retry installed an updated prompt. The driver now exits on the terminal
+recovery snapshot, with a deterministic interleaving regression. Broader attempt
+and external-effect fencing remains in hwp-6pu.4. Hosted Windows also required
+integration-test budgets above its measured 18-second PowerShell invocation;
+production execution defaults were not increased.
+
 The previous live macOS check exercised installation, scope isolation and review
 cancel/retry/completion. It did not certify macOS agent execution, board dispatch,
 worktrees, delivery or memory. Those require their own acceptance evidence.

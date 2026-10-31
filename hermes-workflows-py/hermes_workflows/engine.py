@@ -269,7 +269,12 @@ class Engine:
                         finished_at=time.time(),
                     )
 
-            self.db.mutate_run(run_id, recover, owner=owner)
+            recovered = self.db.mutate_run(run_id, recover, owner=owner)
+            # A retry can replace the spec immediately after recovery commits
+            # a failure. This driver still holds the old spec: finish it using
+            # the recovery snapshot so the next driver loads the retry's spec.
+            if recovered["status"] in TERMINAL:
+                return
             while True:
                 if time.monotonic() - last_heartbeat >= 5:
                     if not self.db.claim(run_id, owner):

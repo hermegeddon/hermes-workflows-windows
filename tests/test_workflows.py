@@ -238,6 +238,48 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["nodes"]["work"]["output"], "updated fix")
 
+    def test_retry_after_recovery_commit_replaces_the_driver_spec(self):
+        calls = []
+
+        async def runner(node, run):
+            calls.append(node["prompt"])
+            return Result(output=node["prompt"])
+
+        engine = Engine(self.db, Executor(agent_runner=runner))
+        wf = workflow([agent("work")])
+        state = engine.start(wf)
+        run_id = state["run_id"]
+        self.db.mutate_run(
+            run_id,
+            lambda r: (r.update(status="running"), r["nodes"]["work"].update(status="running")),
+        )
+        updated = copy.deepcopy(wf)
+        updated["nodes"][0]["prompt"] = "updated fix"
+        mutate = self.db.mutate_run
+        retried = False
+
+        def retry_after_recovery(*args, **kwargs):
+            nonlocal retried
+            snapshot = mutate(*args, **kwargs)
+            if not retried and args[1].__name__ == "recover":
+                retried = True
+                self.assertEqual(snapshot["status"], "failed")
+                engine.retry(run_id, updated, "work")
+            return snapshot
+
+        self.assertTrue(self.db.claim(run_id, "old-driver"))
+        with patch.object(self.db, "mutate_run", side_effect=retry_after_recovery):
+            asyncio.run(engine.drive(run_id, "old-driver"))
+        self.assertTrue(retried)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.db.get_run(run_id)["status"], "created")
+        self.assertTrue(self.db.claim(run_id, "new-driver"))
+        asyncio.run(engine.drive(run_id, "new-driver"))
+        self.assertEqual(calls, ["updated fix"])
+        result = self.db.get_run(run_id)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["nodes"]["work"]["output"], "updated fix")
+
     def test_two_runtimes_execute_once_and_cancel(self):
         calls = []
 
