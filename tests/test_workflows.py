@@ -360,13 +360,18 @@ class WorkflowTests(unittest.TestCase):
                         "shell": shell,
                         "command": command,
                         "workdir": str(workdir),
+                        "timeout_seconds": 60,
                     }
                 ],
                 id=shell,
             )
             state = runtime.engine.start(wf)
-            result = self.wait(state["run_id"])
+            # Clean hosted Windows images can pay a substantial first-start
+            # PowerShell/.NET cost. Keep production deadlines unchanged while
+            # allowing this actual-shell integration check to finish.
+            result = self.wait(state["run_id"], timeout=65)
             self.assertEqual(result["status"], "completed", result)
+            print(f"Native {shell}: {result['nodes']['script']['telemetry']['duration_ms']} ms")
             text = (workdir / "result.txt").read_text(encoding="utf-8-sig").strip()
             self.assertEqual(text, "hello" if shell == "cmd" else "żółć")
 
@@ -444,16 +449,17 @@ class WorkflowTests(unittest.TestCase):
                         "type": "script",
                         "shell": "powershell",
                         "command": "Write-Output ('żółć|' + $env:HWP_PUBLIC + '|' + $env:HWP_SECRET)",
+                        "timeout_seconds": 60,
                     }
                 ]
             )
             state = runtime.engine.start(wf)
-            result = self.wait(state["run_id"])
+            result = self.wait(state["run_id"], timeout=65)
             self.assertEqual(result["status"], "completed", result)
             self.assertEqual(result["nodes"]["work"]["output"].strip(), "żółć|allowed|")
         wf["nodes"][0]["command"] = "exit 7"
         state = runtime.engine.start(wf)
-        result = self.wait(state["run_id"])
+        result = self.wait(state["run_id"], timeout=65)
         self.assertEqual(result["status"], "failed")
         self.assertIn("code 7", result["nodes"]["work"]["error"])
 
@@ -473,12 +479,18 @@ class WorkflowTests(unittest.TestCase):
                 env=env,
                 capture_output=True,
                 encoding="utf-8",
-                timeout=15,
+                timeout=75,
             )
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             return json.loads(result.stdout)
 
-        cli("import", str(PLUGIN / "examples" / "windows-smoke.workflow.json"))
+        # This tests process lifetime/review persistence, not a cold shell's
+        # startup speed. Adapt only the isolated fixture's execution budget.
+        smoke = json.loads((PLUGIN / "examples/windows-smoke.workflow.json").read_text("utf-8"))
+        smoke["nodes"][0]["timeout_seconds"] = 60
+        smoke_path = self.root / "hosted-smoke.workflow.json"
+        smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
+        cli("import", str(smoke_path))
         waiting = cli("run", "windows-smoke")
         self.assertEqual(waiting["status"], "waiting")
         done = cli(
@@ -492,7 +504,8 @@ class WorkflowTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         target = self.root / "installed plugin"
-        self.assertEqual(module.install(target), target)
+        # Windows TEMP may use an 8.3 spelling, while install() resolves it.
+        self.assertEqual(module.install(target), target.resolve())
         desktop = target / "desktop" / "plugin.js"
         self.assertTrue(desktop.is_file())
         self.assertEqual(desktop.read_bytes(), (PLUGIN / "desktop" / "plugin.js").read_bytes())

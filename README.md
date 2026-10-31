@@ -16,6 +16,19 @@ The optional dashboard integration test runs when FastAPI, httpx, and PyYAML are
 available in the selected interpreter. Provider calls are replaced with deterministic
 fixtures; no tests consume LLM credits or modify the real Hermes home.
 
+CI runs Python 3.11 and 3.14 on Windows and Linux, first with the standard
+library and then with the optional adapter dependencies in `requirements-ci.txt`.
+Both platforms also run frontend typechecking, tests, and production builds.
+Rebuilt bundles must match the committed assets. Check asset integrity locally:
+
+```powershell
+python scripts/verify_assets.py
+```
+
+The pinned upstream capability assessment is in
+[`docs/compatibility.md`](docs/compatibility.md). Implementation ownership and
+dependencies live in Beads under epic `hwp-6pu`.
+
 The dashboard companion's loader tests use Node's built-in test runner (Node is
 only needed for this development check):
 
