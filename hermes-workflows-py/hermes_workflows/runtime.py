@@ -14,11 +14,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import settings
 from .db import ConflictError, Database, hermes_home
 from .engine import Engine
 from .executor import Executor
 from .gate_reply import ChatReviews
 from .native import NativeHost
+from .native_schedules import Schedules
 from .notifications import Notifications
 from .origin import NativeSender, Origins
 from .schedules import Cron, iso_now
@@ -44,6 +46,8 @@ class Runtime:
         self.notifications = Notifications(self.db, self.home, NativeSender(self.origins))
         self.chat_reviews = ChatReviews(self)
         self.telemetry = TelemetryStore(self.db.path)
+        self.schedules = Schedules(self)
+        self._schedule_mode = None
         self.owner = uuid.uuid4().hex
         self.thread: threading.Thread | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -96,7 +100,7 @@ class Runtime:
         for detail in self.specs.all():
             try:
                 self.sync_schedule(detail["workflow"])
-            except (KeyError, ValueError):
+            except (KeyError, ValueError, RuntimeError):
                 log.warning("invalid workflow schedule: %s", detail["path"])
         self._ready.set()
         tasks = {}
@@ -169,44 +173,24 @@ class Runtime:
                 log.warning("workflow runtime is still finishing shutdown")
 
     def sync_schedule(self, workflow: dict):
-        job_id = "workflow-" + workflow["id"]
-        try:
-            old = self.db.schedule(job_id)
-        except KeyError:
-            old = None
-        trigger = workflow["trigger"]
-        if trigger["type"] != "cron":
-            if old:
-                self.db.delete_schedule(job_id)
-            return
-        signature = json.dumps(trigger, sort_keys=True)
-        if old and old.get("spec_signature") == signature:
-            # Manual cron edits/pauses are retained until the spec trigger changes.
-            if old.get("workflow_enabled") != workflow.get("enabled", True):
-                old["enabled"] = workflow.get("enabled", True)
-                old["workflow_enabled"] = old["enabled"]
-                self.db.put_schedule(old)
-            return
-        cron = Cron(trigger["schedule"], trigger.get("timezone", "UTC"))
-        data = {
-            "hermes_cron_id": job_id,
-            "workflow_id": workflow["id"],
-            "cron_expression": trigger["schedule"],
-            "timezone": trigger.get("timezone", "UTC"),
-            "enabled": workflow.get("enabled", True),
-            "workflow_enabled": workflow.get("enabled", True),
-            "last_run": old.get("last_run") if old else None,
-            "next_run": cron.next().isoformat(),
-            "spec_signature": signature,
-        }
-        self.db.put_schedule(data)
+        return self.schedules.sync(workflow)
 
     def tick_schedules(self):
+        mode = settings.values(self.db)["scheduler_backend"]
+        if mode != self._schedule_mode:
+            for detail in self.specs.all():
+                self.sync_schedule(detail["workflow"])
+            self._schedule_mode = mode
         # An atomic due-time update prevents gateway and dashboard processes
         # from firing the same schedule. Single-flight run creation is a second
         # guard. Missed intervals coalesce into one fire after restart.
         for row in self.db.schedules():
-            if not row["enabled"] or row.get("deleted") or not row.get("next_run"):
+            if (
+                row.get("authority") == "native"
+                or not row["enabled"]
+                or row.get("deleted")
+                or not row.get("next_run")
+            ):
                 continue
             now = datetime.now(timezone.utc)
             if datetime.fromisoformat(row["next_run"]) > now:
@@ -220,6 +204,7 @@ class Runtime:
                     live = json.loads(current[0])
                     if (
                         live.get("enabled")
+                        and live.get("authority") != "native"
                         and not live.get("deleted")
                         and live.get("next_run") == row["next_run"]
                     ):

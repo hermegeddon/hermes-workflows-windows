@@ -82,8 +82,10 @@ class BootstrapTests(unittest.TestCase):
             self.assertIs(loaded[0], loaded[2])
             self.assertIs(loaded[1], loaded[3])
             self.assertIsNot(loaded[0], loaded[1])
-            self.assertEqual(Path(loaded[0].__file__).parent, one / "hermes_workflows")
-            self.assertEqual(Path(loaded[1].__file__).parent, two / "hermes_workflows")
+            # Hosted Windows TEMP may contain RUNNER~1 while the loader resolves
+            # its long name. Assert filesystem ownership, not path spelling.
+            self.assertTrue(Path(loaded[0].__file__).parent.samefile(one / "hermes_workflows"))
+            self.assertTrue(Path(loaded[1].__file__).parent.samefile(two / "hermes_workflows"))
 
     def test_failed_file_import_does_not_leave_a_partial_backend(self):
         root = self.copy("broken")

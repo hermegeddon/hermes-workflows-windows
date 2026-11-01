@@ -54,7 +54,7 @@ Local implementation evidence is in
 | Chat reply review routing | Implemented for newly origin/session-bound runs: unique gate selection, native admission/control ownership, explicit decisions or free-text picks, transactional replay receipts and attempt/quote/time fences. Windows Discord channel acceptance passed | U6; `gate_reply.py`, frozen interpretation fixtures, native capture-only hook verifier and hwp-6pu.32. Real thread/remote checks remain in the final matrix |
 | Worker-free PR wait | Partial: full GitHub PR URL, open/merged/closed handling, token and timeout work; numeric/contextual PR lookup is absent | `Executor._wait`; U1 and upstream `wait.py`; hwp-6pu.15 |
 | Single-flight, cancel and retry | Implemented with leases and explicit node/full retry; external native work and upstream `resume` default-selection semantics remain partial | `db.py`, `Engine.retry`, `cli.py`; U3; hwp-6pu.4, hwp-6pu.15 |
-| Cron and schedule actions | Functional Python scheduler and SQLite schedules; not native Hermes Cron registration/tagging | `schedules.py`, `runtime.py`, schedule/restart tests; U5; hwp-6pu.14 |
+| Cron and schedule actions | Profile-scoped native `workflow:<id>` jobs with Python triggers, native-view edits, pause/resume/run-now, durable handoff and explicit standalone mode implemented. Resident async supervision replaces upstream's transient advance-tick job | `native_schedules.py`, `schedules.py`, schema-5 authority guard, concurrency/recovery tests and installed-native Windows runner verification; Windows web/Desktop upgrade acceptance passed; U5; hwp-6pu.14 |
 | Event trigger declarations | Declared and validated. Automatic webhook/GitHub/API-event-to-run wiring is absent in both pinned upstream and this backend | U1 explicitly defers host event firing. Preserve declarations in hwp-6pu.5; actual event firing is an extension, not missing pinned parity |
 | Kanban lifecycle advance | Python supervisor polls owned cards and native final run summaries, resumes the same attempt on restart, and reconciles terminal/superseded card cleanup. Blocked cards wait up to the persisted node deadline; lifecycle hooks are not required for progress | U5; `KanbanExecutor`, native/isolated tests; hwp-6pu.6. No POSIX detached commands |
 | Result delivery and lifecycle notices | Native router adapter, scoped origin/default/explicit targets, result `[SILENT]`, idempotent native card subscriptions and node overrides implemented. Transactional schema-3 outbox distinguishes acknowledged, headless and ambiguous sends. Cross-profile routers are refused; Windows local-file and explicit Discord-channel delivery passed live acceptance | U6; `notifications.py`, `origin.py`, pinned reference fixtures and native capture-only verifier; hwp-6pu.9 |
@@ -62,7 +62,7 @@ Local implementation evidence is in
 | Telemetry and dangerous-command approvals | Live direct/native worker hooks, per-card stream replacement, adopted-card aggregation and persisted attempt snapshots implemented. Direct dashboard prompts require opt-in; native finite-job policies remain host-owned and prompts without an explicitly selected supported transport remain read-only | `telemetry.py`, `observer.py`, worker callbacks, API and web/Desktop controls; pinned reference, cross-process and installed-native capture tests. Windows web/Desktop decisions and final native completion counters passed; U8; hwp-6pu.12 |
 | Traces and log export | Redacted JSONL lifecycle, notification marker, worker and approval events with attempt/revision extensions implemented; canonical rows are transactional SQLite rather than separate worker trace files. Exports include attempt history | Schema 4, `trace.py`, `redact.py`, `test_telemetry.py`, reference fixtures and delivery trace tests; live redaction, history equality, cancellation and stale-decision rejection passed; U8; hwp-6pu.12 |
 | Portable template export | Partial cached snapshot plus generic adaptation guide; structured de-binding, placeholder inventory and composite provenance/model cache are missing | `api.py` export-template; U9; hwp-6pu.13 |
-| Settings | Implemented subset in SQLite; upstream config/env/default precedence and Kanban/memory/tick settings are missing | `settings.py`; U10; hwp-6pu.14 |
+| Settings | Complete pinned schema with honest enforcement flags; scoped partial config writes and config/legacy SQLite/env/default precedence. Existing Python defaults preserved; unenforced memory/mode/path/tick knobs are explicitly labelled | `settings.py`, pinned settings reference, concurrent-writer/read-only/profile tests and installed-native config checks; Windows web/Desktop upgrade acceptance passed; U10; hwp-6pu.14 |
 | Compile preview, API and command compatibility | Dashboard routes are implemented; plan content includes board routing and adoption fields. Upstream CLI/tool verbs such as `resume` differ | `specs.compile_preview`, `api.py`, `cli.py`, `__init__.py`; U10; hwp-6pu.5/.6/.7/.13/.14/.15 |
 | Web and native Desktop integration | Implemented and live-tested on Windows default/named profiles and remote macOS review workflows | `frontend/src/desktop`, SDK owner/stale-request tests; each feature must include relevant UI coverage, final gate hwp-6pu.16 |
 
@@ -532,6 +532,40 @@ failure remain tracked in **hwp-6pu.34** for release validation. The 347 fronten
 tests, typecheck, both bundles, four loader tests, Ruff and asset hashes passed.
 The final pre-commit Python 3.11 repeat passed all 196 tests in 157s, with normal
 command startup timings; the intermittent readiness issue remains a release gate.
+
+Schema-5 settings and native scheduling passed live Windows acceptance on
+November 1 in the isolated `workflow-qa` profile. Web settings writes appeared in
+Desktop, Desktop writes appeared in web, and both persisted through the native
+profile config API. A finish-only fixture appeared in Hermes' own scheduled-job
+view. Web pause/resume and a cron-expression edit persisted in the native job;
+web and Desktop **Run now** each produced one completed run. Switching from auto
+to standalone paused that job before restoring local firing, then switching to
+native reused its original ID and cleared the local due time. Exactly two runs
+completed, with no extra runs during either handoff. A supported idle-profile
+plugin reload preserved the native ID, edited expression, timezone and both runs.
+Previously saved telemetry run snapshots remained identical after the upgrade.
+
+One Desktop settings save encountered a gateway ticket-bootstrap error; an
+explicit retry succeeded. The schedule table also needed horizontal scrolling
+to expose Actions in the available Desktop pane. These are host transport/layout
+observations, not evidence of a failed backend write. Cleanup removed the
+disposable native job and trigger, disabled its workflow, retained both completed
+runs, and restored the original QA config bytes. Environment and legacy SQLite
+settings were unchanged; the default profile's workflow config was untouched.
+The idle QA profile was reloaded again, web confirmed the restored defaults, and
+Desktop returned to local/default. No provider calls, workflow shell commands or
+external messages were used. Evidence is under
+`.cache/dashboard-check/native-settings-live-qa/`.
+
+The implementation passed all 209 Python tests on both 3.11 and managed 3.14
+(one and four optional dependency skips respectively), followed by 19 focused
+settings/native-boundary checks on each interpreter after the final scope
+adjustment. Installed-native verification covered the real Windows Python cron
+runner, config merging, foreign-profile environment isolation, fire replay,
+scheduler handoff and timezone/DST behavior. Ruff, asset hashes and loader checks
+passed. The hosted Windows short/long TEMP-path assertion was corrected locally;
+remote CI must verify that correction after publication. Linux live scheduling,
+remote owners and clean-install coverage remain in the final parity gate.
 
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner

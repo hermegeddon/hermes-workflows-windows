@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 V1 = """
 CREATE TABLE py_runs (
@@ -137,3 +137,17 @@ def migrate(con):
     if version == 3:
         statements(con, V4)
         con.execute("UPDATE py_metadata SET version=4")
+        version = 4
+    if version == 4:
+        # Keep a still-running older supervisor from reintroducing a local due
+        # time after native handoff, including a legacy spec-trigger rewrite.
+        con.execute("""
+            CREATE TRIGGER py_schedule_authority_guard BEFORE UPDATE OF data ON py_schedules
+            WHEN (json_extract(OLD.data,'$.authority')='native' AND
+                (coalesce(json_extract(NEW.data,'$.authority'),'') NOT IN ('native','standalone')
+                 OR json_extract(NEW.data,'$.generation') IS NULL))
+              OR (json_extract(NEW.data,'$.authority')='native'
+                  AND json_extract(NEW.data,'$.next_run') IS NOT NULL)
+            BEGIN SELECT RAISE(ABORT,'native schedule authority cannot be overwritten by a legacy writer'); END
+        """)
+        con.execute("UPDATE py_metadata SET version=5")

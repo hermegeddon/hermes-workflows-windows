@@ -13,9 +13,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import settings
 from .db import ConflictError, hermes_home
+from .native import NativeUnavailable
 from .redact import redact
 from .runtime import Runtime, get_runtime
-from .schedules import Cron, iso_now
 from .specs import compile_preview, validate
 from .trace import read_trace
 
@@ -83,7 +83,9 @@ class API:
             return 409, {"detail": str(exc)}
         except (ValueError, TypeError) as exc:
             return 400, {"detail": str(exc)}
-        except sqlite3.Error:
+        except NativeUnavailable as exc:
+            return 503, {"detail": str(exc)}
+        except (sqlite3.Error, OSError):
             return 503, {"detail": "workflow storage is temporarily unavailable"}
 
     def dispatch(self, method: str, target: str, payload: object):
@@ -99,9 +101,9 @@ class API:
         db, store, engine = runtime.db, runtime.specs, runtime.engine
         if path == "/settings":
             if method == "GET":
-                return {"values": settings.values(db), "schema": settings.SCHEMA}
+                return {"values": settings.values(db), "schema": settings.schema(db)}
             if method == "PUT":
-                return {"values": settings.save(db, payload), "schema": settings.SCHEMA}
+                return {"values": settings.save(db, payload), "schema": settings.schema(db)}
         if path == "/o2b-status" and method == "GET":
             installed = shutil.which("o2b") is not None
             return {
@@ -131,7 +133,7 @@ class API:
                 latest = {}
                 for row in db.list_runs("all"):
                     latest.setdefault(row["workflow_id"], row)
-                schedules = {s["workflow_id"]: s for s in db.schedules() if not s.get("deleted")}
+                schedules = {s["workflow_id"]: s for s in runtime.schedules.rows()}
                 result = []
                 for detail in store.all():
                     wf = detail["workflow"]
@@ -176,11 +178,8 @@ class API:
                 if method == "DELETE":
                     if db.list_runs("active", workflow_id):
                         raise ConflictError("cancel active runs before deleting the workflow")
+                    runtime.schedules.delete_workflow(workflow_id)
                     store.delete(workflow_id)
-                    try:
-                        db.delete_schedule("workflow-" + workflow_id)
-                    except KeyError:
-                        pass
                     return {"deleted": True}
             if action == "enabled" and method == "PUT":
                 if type(payload.get("enabled")) is not bool:
@@ -322,50 +321,15 @@ class API:
                 runtime.start()
                 return result
         if path == "/schedules" and method == "GET":
-            return {
-                "schedules": [
-                    {
-                        k: v
-                        for k, v in s.items()
-                        if k not in ("spec_signature", "workflow_enabled", "deleted")
-                    }
-                    for s in db.schedules()
-                    if not s.get("deleted")
-                ]
-            }
+            return {"schedules": runtime.schedules.rows()}
         if bits and bits[0] == "schedules" and len(bits) in (2, 3):
-            row = db.schedule(bits[1])
-            if row.get("deleted"):
-                raise KeyError("schedule not found")
             action = bits[2] if len(bits) == 3 else ""
             if not action and method == "DELETE":
-                # Retain a tombstone so startup discovery won't recreate a
-                # schedule deliberately removed from the dashboard.
-                row.update(deleted=True, enabled=False, next_run=None)
-                db.put_schedule(row)
-                return {"deleted": True}
+                return runtime.schedules.action(bits[1], "delete")
             if not action and method == "PUT":
-                cron = Cron(payload.get("cron"), row["timezone"])
-                row.update(cron_expression=payload["cron"], next_run=cron.next().isoformat())
-                db.put_schedule(row)
-                return {"ok": True, "cron_expression": payload["cron"]}
+                return runtime.schedules.action(bits[1], "edit", payload.get("cron"))
             if method == "POST" and action in ("pause", "resume", "run"):
-                if action == "pause":
-                    row["enabled"] = False
-                elif action == "resume":
-                    row["enabled"] = True
-                    row["next_run"] = (
-                        Cron(row["cron_expression"], row["timezone"]).next().isoformat()
-                    )
-                else:
-                    detail = store.get(row["workflow_id"])
-                    started = engine.start(detail["workflow"], workflow_path=detail["path"])
-                    row["last_run"] = iso_now()
-                    db.put_schedule(row)
-                    runtime.start()
-                    return {"ok": True, "run_id": started["run_id"]}
-                db.put_schedule(row)
-                return {"ok": True}
+                return runtime.schedules.action(bits[1], action)
         matching = [
             m for m, route in ROUTES if re.fullmatch(re.sub(r"\{[^}]+\}", "[^/]+", route), path)
         ]

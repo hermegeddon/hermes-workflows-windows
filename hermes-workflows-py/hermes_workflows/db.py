@@ -84,9 +84,11 @@ class Database:
         finally:
             con.close()
 
-    def create_run(self, state: dict, spec: dict, max_active: int = 4) -> dict:
+    def create_run(self, state: dict, spec: dict, max_active: int = 4, *, guard=None) -> dict:
         state = {**state, "execution_revision": 0}
         with self.connect(write=True) as con:
+            if guard is not None:
+                guard(con)
             count = con.execute(
                 "SELECT count(*) FROM py_runs WHERE status IN ('created','running','waiting')"
             ).fetchone()[0]

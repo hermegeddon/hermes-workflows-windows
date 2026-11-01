@@ -1,0 +1,136 @@
+{
+  "upstream_commit": "352e5ffb751e4798e66dcdf1dbe9a80dff768c0f",
+  "source_sha256": "155ffb3fbf1fe6970c08011912eab9f88aa966b9a869e30e74b7bfadd409157d",
+  "fields": {
+    "global_workflows_path": {
+      "key": "global_workflows_path",
+      "type": "string",
+      "enforced": false
+    },
+    "runs_db_path": {
+      "key": "runs_db_path",
+      "type": "string",
+      "enforced": false
+    },
+    "default_mode": {
+      "key": "default_mode",
+      "type": "enum",
+      "options": [
+        "durable",
+        "direct"
+      ],
+      "default": "durable",
+      "enforced": true
+    },
+    "max_parallel_runs": {
+      "key": "max_parallel_runs",
+      "type": "int",
+      "default": 4,
+      "enforced": false
+    },
+    "default_timeout_seconds": {
+      "key": "default_timeout_seconds",
+      "type": "int",
+      "default": 120,
+      "enforced": false
+    },
+    "scripts_enabled": {
+      "key": "scripts_enabled",
+      "type": "bool",
+      "default": false,
+      "enforced": true
+    },
+    "script_env_allowlist": {
+      "key": "script_env_allowlist",
+      "type": "string",
+      "default": "",
+      "enforced": true
+    },
+    "event_debounce_seconds": {
+      "key": "event_debounce_seconds",
+      "type": "int",
+      "default": 2,
+      "enforced": true
+    },
+    "tick_schedule": {
+      "key": "tick_schedule",
+      "type": "string",
+      "default": "every 2m",
+      "enforced": true
+    },
+    "use_workflow_columns": {
+      "key": "use_workflow_columns",
+      "type": "enum",
+      "options": [
+        "auto",
+        "on",
+        "off"
+      ],
+      "default": "auto",
+      "enforced": false
+    },
+    "internal_board": {
+      "key": "internal_board",
+      "type": "string",
+      "default": "hermes-workflows",
+      "env": "HERMES_WORKFLOWS_BOARD",
+      "enforced": true
+    },
+    "dashboard_api_host": {
+      "key": "dashboard_api_host",
+      "type": "string",
+      "default": "127.0.0.1",
+      "env": "HERMES_WORKFLOWS_DASHBOARD_API_HOST",
+      "enforced": true
+    },
+    "dashboard_api_port": {
+      "key": "dashboard_api_port",
+      "type": "int",
+      "default": 9123,
+      "env": "HERMES_WORKFLOWS_DASHBOARD_API_PORT",
+      "enforced": true
+    },
+    "trace_enabled": {
+      "key": "trace_enabled",
+      "type": "bool",
+      "default": false,
+      "env": "HERMES_WORKFLOWS_TRACE",
+      "enforced": true
+    },
+    "mode": {
+      "key": "mode",
+      "type": "enum",
+      "options": [
+        "auto",
+        "open_second_brain",
+        "none"
+      ],
+      "default": "auto",
+      "enforced": true
+    },
+    "fail_open": {
+      "key": "fail_open",
+      "type": "bool",
+      "default": true,
+      "enforced": false
+    },
+    "write_run_summaries": {
+      "key": "write_run_summaries",
+      "type": "bool",
+      "default": true,
+      "enforced": true
+    },
+    "write_node_failures": {
+      "key": "write_node_failures",
+      "type": "bool",
+      "default": true,
+      "enforced": true
+    },
+    "write_node_events": {
+      "key": "write_node_events",
+      "type": "bool",
+      "default": false,
+      "enforced": true
+    }
+  }
+}

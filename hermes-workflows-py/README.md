@@ -266,12 +266,31 @@ an explicit retry. External wait nodes resume polling with their original timeou
 deadline. Retrying uses the live workflow configuration and rejects structural
 graph changes; a selected node retry also resets its descendants.
 
-Schedules use a Python five-field cron evaluator and persist next/last fire times.
-Overlapping runs are skipped; missed intervals coalesce to one run on restart.
-UTC works with the standard library on Windows. Other IANA timezones need timezone
-data in the Hermes environment. Schedule edits, pauses, and deletion survive
-restart. These schedules are managed by this backend, independently of Hermes'
-native cron job store.
+`scheduler_backend` selects `auto` (default), `native`, or `standalone`. Auto uses
+Hermes cron when the required profile-scoped APIs are available; otherwise new
+schedules use the Python scheduler. Once a schedule has native authority, losing
+the host APIs never silently enables Python firing. Native schedules appear in
+Hermes' scheduled-job views as `workflow:<id>` and use a generated `.py` trigger
+under the owning profile's `scripts` directory. No Bash shim, Bun process or
+dependency installer is used. The trigger queues the run; a resident workflow
+supervisor drives it. Native cron determines catch-up and timezone behavior.
+
+An explicit standalone choice pauses native jobs before re-enabling local due
+times. Standalone mode supports five-field cron and `every 10m`-style intervals;
+overlapping runs are skipped and missed intervals coalesce on restart. UTC needs
+only the standard library; other IANA zones need timezone data. Existing edits,
+pauses, timestamps and deletion tombstones survive handoff/restart. Native-view
+edits remain authoritative. A matching name owned by a different script causes a
+conflict rather than replacement. `run now` on a native schedule queues its next
+host tick; it does not start a second local run.
+
+This upgrade uses additive **schema 5**, retaining run/attempt history and adding
+a guard against older schedule writers restoring local firing after handoff.
+Restart the gateway and all embedded dashboard/proxy hosts together before live
+use of the new settings and scheduling controls. Older versions reject schema 5.
+`scripts/verify_native_schedules.py --hermes-source <checkout>` exercises native
+config merging, profile isolation, real Windows Python script execution, claim
+replay and both scheduler authorities entirely in temporary homes.
 
 ## Dashboard API
 
@@ -642,8 +661,24 @@ an external system can start a run through the run route.
 `GITHUB_TOKEN` available for private repositories. Numeric-only PR references
 need conversion to URLs. Template export produces a cached offline spec and
 adaptation guide; it does not call an LLM to de-bind installation-specific values.
-Settings are persisted in this backend's SQLite store, independently of Hermes'
-`config.yaml`; the returned schema lists the implemented settings.
+With Hermes installed, edited settings are persisted through its scoped config
+API under `plugins.workflows`, using partial merges that preserve unrelated
+configuration and environment references. Resolution is stored config, explicit
+legacy SQLite values, named environment override, then default. Unedited legacy
+values remain a compatibility fallback; saving another field never copies them
+over another host's newer choice. Without Hermes, standalone settings remain in
+SQLite. The complete pinned settings schema is exposed, with concrete storage
+defaults and honest `enforced` flags: memory writes, alternate execution modes,
+path relocation and upstream tick/debounce knobs remain unenforced until their
+corresponding integrations exist. The Python engine keeps its continuous resident
+supervisor rather than creating upstream's transient advance-tick cron job.
+
+Live Windows web/Desktop checks passed for native config saves, schedule
+pause/resume/edit/run-now, native/standalone handoffs and profile plugin reload.
+The native job retained its ID and manual cron edit, and each frontend's run-now
+action produced exactly one completed run. The disposable QA configuration was
+restored afterward. Remote-owner and clean-install validation remain part of the
+release gate; see `docs/compatibility.md` for the evidence and remaining scope.
 
 Two deliberate graph compatibility choices remain: forward joins wait for all
 parents (the pinned upstream core activates on any incoming route), and re-entered

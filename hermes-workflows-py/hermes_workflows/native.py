@@ -35,8 +35,22 @@ FEATURES = {
     "dispatch": ("hermes_cli.kanban_db_dispatch", ("dispatch_once",)),
     "worktrees": ("hermes_cli.worktree_ops", ("_setup_worktree", "removal_blocked")),
     "workspace_git": ("hermes_cli.kanban_db_workspace", ("_git",)),
-    "cron": ("cron.jobs", ("create_job", "list_jobs", "update_job", "remove_job")),
+    "cron": (
+        "cron.jobs",
+        (
+            "create_job",
+            "get_job",
+            "list_jobs",
+            "update_job",
+            "remove_job",
+            "pause_job",
+            "resume_job",
+            "trigger_job",
+            "use_cron_store",
+        ),
+    ),
     "config": ("hermes_cli.config", ("load_config", "save_config")),
+    "config_env": ("hermes_cli.config", ("get_env_value", "load_env")),
     "delivery": ("gateway.delivery", ("DeliveryTarget", "DeliveryRouter")),
 }
 
@@ -107,6 +121,29 @@ class NativeHost:
             if inspect.isgenerator(result) or inspect.isasyncgen(result):
                 raise TypeError("deferred iterators cannot leave a native profile scope")
             return result
+
+    def env_settings(self, names):
+        """Resolve only declared setting overrides, never a foreign profile env.
+
+        Background supervisors may have a home override without a bound secret
+        scope. Read that home's dotenv in this case; do not build external vault
+        scopes or copy the launch profile's environment into a routed profile.
+        """
+        with self.scope():
+            config = self.module("config_env")
+            secrets = self.loader("agent.secret_scope")
+            constants = self.loader("hermes_constants")
+            bound = secrets.current_secret_scope_home()
+            own_scope = bound is not None and Path(bound).resolve() == self.home
+            launch = Path(constants.get_routing_process_hermes_home()).resolve() == self.home
+            if own_scope:
+                return {key: config.get_env_value(key) for key in names}
+            dotenv = config.load_env()
+            if bound is None and launch:
+                import os
+
+                return {key: os.environ.get(key, dotenv.get(key)) for key in names}
+            return {key: dotenv.get(key) for key in names}
 
     async def acall(self, feature, operation, *args, **kwargs):
         with self.scope():

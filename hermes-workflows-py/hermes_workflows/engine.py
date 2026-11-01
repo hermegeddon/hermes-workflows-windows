@@ -79,6 +79,7 @@ class Engine:
         run_id: str | None = None,
         origin: str | None = None,
         origin_metadata: dict | None = None,
+        _schedule_guard=None,
     ) -> dict:
         require_valid(workflow)
         if not workflow.get("enabled", True):
@@ -122,7 +123,9 @@ class Engine:
             state["board"] = board
         if input and input.strip():
             state["input"] = input.strip()
-        return self.db.create_run(state, workflow, config["max_parallel_runs"])
+        return self.db.create_run(
+            state, workflow, config["max_parallel_runs"], guard=_schedule_guard
+        )
 
     def cancel(self, run_id: str) -> dict:
         def change(run):

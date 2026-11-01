@@ -405,6 +405,7 @@ class TelemetryTests(unittest.TestCase):
     def test_schema3_upgrade_is_additive_and_failed_ddl_rolls_back(self):
         before = self.db.get_run(self.rid)
         with self.db.connect(write=True) as con:
+            con.execute("DROP TRIGGER py_schedule_authority_guard")
             for table in ("py_worker_approvals", "py_workers", "py_traces"):
                 con.execute(f"DROP TABLE {table}")
             con.execute("UPDATE py_metadata SET version=3")
