@@ -62,6 +62,15 @@ def validate(workflow: dict) -> dict:
         err("invalid_version", "version must be a positive integer")
     if "enabled" in workflow and type(workflow["enabled"]) is not bool:
         err("invalid_enabled", "enabled must be boolean")
+    if "deliver" in workflow and (
+        not isinstance(workflow["deliver"], str) or not workflow["deliver"].strip()
+    ):
+        err("invalid_delivery", "deliver must be a non-empty string")
+    notifications = workflow.get("notifications", {})
+    if not isinstance(notifications, dict) or (
+        "subscribe_cards" in notifications and type(notifications["subscribe_cards"]) is not bool
+    ):
+        err("invalid_notifications", "notifications.subscribe_cards must be boolean")
     scope = workflow.get("scope", {})
     if not isinstance(scope, dict) or scope.get("type") not in ("global", "project", "projects"):
         err("invalid_scope", "scope.type must be global, project or projects")
@@ -98,6 +107,8 @@ def validate(workflow: dict) -> dict:
             err("duplicate_node", f"duplicate node id '{name}'")
         seen.add(name)
         kind = node.get("type")
+        if "notify_completion" in node and type(node["notify_completion"]) is not bool:
+            err("invalid_notifications", f"'{name}'.notify_completion must be boolean")
         if not isinstance(kind, str) or kind not in NODE_TYPES:
             err("invalid_node_type", f"unknown node type for '{name}'")
         if kind == "script" and (
@@ -572,6 +583,7 @@ def compile_preview(workflow: dict) -> dict:
                             "sequential",
                             "stack",
                             "branch",
+                            "notify_completion",
                         )
                         if k in n
                     },
@@ -611,7 +623,7 @@ def compile_preview(workflow: dict) -> dict:
         else [],
         "profiles": sorted({t["assignee"] for t in tasks}),
         "skills": sorted({s for t in tasks for s in t.get("skills", [])}),
-        "subscribe_cards": False,
+        "subscribe_cards": workflow.get("notifications", {}).get("subscribe_cards", True),
         "memory": {"provider": "none", "fail_open": True},
     }
     if workflow.get("params"):
@@ -629,4 +641,6 @@ def compile_preview(workflow: dict) -> dict:
                 "appUrl": "hermes://workflow/" + workflow["id"],
             },
         )
+    if workflow.get("deliver"):
+        result["deliver"] = workflow["deliver"]
     return result

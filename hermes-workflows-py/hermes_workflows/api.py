@@ -32,6 +32,8 @@ ROUTES = [
     ("POST", "/workflows/{workflow_id}/run"),
     ("GET", "/runs"),
     ("GET", "/runs/{run_id}"),
+    ("GET", "/runs/{run_id}/notifications"),
+    ("POST", "/runs/{run_id}/notifications/{notice_id}/reconcile"),
     ("GET", "/runs/{run_id}/export"),
     ("POST", "/runs/{run_id}/review"),
     ("POST", "/runs/{run_id}/cancel"),
@@ -56,8 +58,10 @@ class APIError(Exception):
 
 
 class API:
-    def __init__(self, runtime: Runtime | None = None):
+    def __init__(self, runtime: Runtime | None = None, *, origin=None, origin_metadata=None):
         self._runtime = runtime
+        self.origin = origin
+        self.origin_metadata = origin_metadata
 
     @property
     def runtime(self):
@@ -189,6 +193,8 @@ class API:
                     project_id=payload.get("project_id"),
                     input=payload.get("input"),
                     params=payload.get("params"),
+                    origin=self.origin,
+                    origin_metadata=self.origin_metadata,
                 )
                 runtime.start()
                 return {"run_id": state["run_id"], "status": state["status"]}
@@ -238,9 +244,22 @@ class API:
             if scope not in ("active", "all"):
                 raise ValueError("scope must be active or all")
             return {"runs": db.list_runs(scope, query.get("workflow_id", [None])[0])}
+        if (
+            len(bits) == 5
+            and bits[0] == "runs"
+            and bits[2] == "notifications"
+            and bits[4] == "reconcile"
+            and method == "POST"
+        ):
+            if not any(n["notice_id"] == bits[3] for n in runtime.notifications.records(bits[1])):
+                raise KeyError("notification not found for this run")
+            runtime.notifications.reconcile(bits[3], delivered=payload.get("delivered"))
+            return {"notice_id": bits[3], "status": "sent" if payload["delivered"] else "failed"}
         if bits and bits[0] == "runs" and len(bits) in (2, 3):
             run_id, action = bits[1], bits[2] if len(bits) == 3 else ""
             state = db.get_run(run_id)
+            if action == "notifications" and method == "GET":
+                return {"notifications": runtime.notifications.records(run_id)}
             if not action and method == "GET":
                 # Use this run's immutable spec, rather than a subsequently
                 # edited workflow, to describe the gate's allowed decisions.

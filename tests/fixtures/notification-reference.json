@@ -1,0 +1,146 @@
+{
+  "reference": {
+    "commit": "352e5ffb751e4798e66dcdf1dbe9a80dff768c0f",
+    "source_sha256": {
+      "hermes_workflows/notifications.py": "7f6b34d41af4258dfb5aec29c8797936079ec429d9b274434845831df526756c",
+      "hermes_workflows/engine.py": "dd43f4b675e4945e3b5de797b247ba03d93687f5daab2eaae943f3487dcd9c76"
+    }
+  },
+  "targets": [
+    {
+      "origin": null,
+      "default": null,
+      "deliver": null,
+      "expected": null
+    },
+    {
+      "origin": "telegram:one",
+      "default": "local",
+      "deliver": null,
+      "expected": "telegram:one"
+    },
+    {
+      "origin": null,
+      "default": "discord:default",
+      "deliver": null,
+      "expected": "discord:default"
+    },
+    {
+      "origin": "telegram:one",
+      "default": "local",
+      "deliver": "origin",
+      "expected": "telegram:one"
+    },
+    {
+      "origin": null,
+      "default": "local",
+      "deliver": "origin",
+      "expected": "local"
+    },
+    {
+      "origin": null,
+      "default": null,
+      "deliver": "origin",
+      "expected": null
+    },
+    {
+      "origin": "telegram:one",
+      "default": "local",
+      "deliver": "discord:explicit",
+      "expected": "discord:explicit"
+    },
+    {
+      "origin": null,
+      "default": null,
+      "deliver": "local",
+      "expected": "local"
+    }
+  ],
+  "silent": [
+    {
+      "text": null,
+      "expected": false
+    },
+    {
+      "text": "",
+      "expected": false
+    },
+    {
+      "text": "result [SILENT] trailing",
+      "expected": true
+    },
+    {
+      "text": "[silent] ordinary output",
+      "expected": false
+    },
+    {
+      "text": "żółć",
+      "expected": false
+    }
+  ],
+  "outputs": [
+    {
+      "nodes": {},
+      "expected": null
+    },
+    {
+      "nodes": {
+        "work": {
+          "status": "completed",
+          "output": "first",
+          "seq": 1
+        },
+        "finish": {
+          "status": "completed",
+          "seq": 3
+        }
+      },
+      "expected": "first"
+    },
+    {
+      "nodes": {
+        "failed": {
+          "status": "failed",
+          "output": "ignore",
+          "seq": 9
+        },
+        "work": {
+          "status": "completed",
+          "output": "keep",
+          "seq": 2
+        }
+      },
+      "expected": "keep"
+    },
+    {
+      "nodes": {
+        "a": {
+          "status": "completed",
+          "output": "a",
+          "seq": 1
+        },
+        "b": {
+          "status": "completed",
+          "output": "b",
+          "seq": 1
+        }
+      },
+      "expected": "b"
+    },
+    {
+      "nodes": {
+        "a": {
+          "status": "completed",
+          "output": "old",
+          "seq": 1
+        },
+        "b": {
+          "status": "completed",
+          "output": "latest",
+          "seq": 8
+        }
+      },
+      "expected": "latest"
+    }
+  ]
+}

@@ -8,6 +8,13 @@ SCHEMA = {
     "namespace": "plugins.workflows",
     "groups": [
         {
+            "key": "notifications",
+            "label": "Notifications",
+            "fields": [
+                {"key": "default_deliver", "type": "string", "default": "", "enforced": True},
+            ],
+        },
+        {
             "key": "execution",
             "label": "Execution",
             "fields": [

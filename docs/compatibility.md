@@ -51,13 +51,13 @@ Local implementation evidence is in
 | Managed scratch/worktree workspaces and stacked branches | Native board cards support scratch, dir and pre-materialized linked worktrees. Adopted stacks persist branch context and replayable fast-forward barriers; dirty/mismatched/conflicting/locked trees fail without destructive repair. Windows web/Desktop acceptance passed with real native workers and commits | U4, `test_worktrees.py`, `verify_native_worktrees.py`; hwp-6pu.8 |
 | Prompt nodes and ancestor input references | Implemented for DAGs/cycles with runtime channel-availability checks and single-pass named mapping substitution; unavailable current-iteration values fail rather than becoming empty text | `specs.resolve`, `Engine._execute`, loop input fixtures; hwp-6pu.5 |
 | Human review through API, tool, CLI, web and Desktop | Implemented with allowed decisions, notes and immutable run-spec review options; maintained web/Desktop clients fence requests with attempt IDs and handle fast re-entry/late acknowledgements | Review loop/restart/stale-token tests. Re-entry clears old decisions instead of retaining the pinned upstream value; hwp-6pu.5 |
-| Chat reply review routing | Missing: no captured origin or uniquely-waiting-gate `pre_gateway_dispatch` hook | U6; hwp-6pu.10 |
+| Chat reply review routing | Origin capture is implemented; uniquely-waiting-gate chat reply resolution remains missing | U6; hwp-6pu.10 |
 | Worker-free PR wait | Partial: full GitHub PR URL, open/merged/closed handling, token and timeout work; numeric/contextual PR lookup is absent | `Executor._wait`; U1 and upstream `wait.py`; hwp-6pu.15 |
 | Single-flight, cancel and retry | Implemented with leases and explicit node/full retry; external native work and upstream `resume` default-selection semantics remain partial | `db.py`, `Engine.retry`, `cli.py`; U3; hwp-6pu.4, hwp-6pu.15 |
 | Cron and schedule actions | Functional Python scheduler and SQLite schedules; not native Hermes Cron registration/tagging | `schedules.py`, `runtime.py`, schedule/restart tests; U5; hwp-6pu.14 |
 | Event trigger declarations | Declared and validated. Automatic webhook/GitHub/API-event-to-run wiring is absent in both pinned upstream and this backend | U1 explicitly defers host event firing. Preserve declarations in hwp-6pu.5; actual event firing is an extension, not missing pinned parity |
 | Kanban lifecycle advance | Python supervisor polls owned cards and native final run summaries, resumes the same attempt on restart, and reconciles terminal/superseded card cleanup. Blocked cards wait up to the persisted node deadline; lifecycle hooks are not required for progress | U5; `KanbanExecutor`, native/isolated tests; hwp-6pu.6. No POSIX detached commands |
-| Result delivery and lifecycle notices | Missing native router, run origin/default target, `[SILENT]`, per-card subscription defaults and node overrides | U6; hwp-6pu.9 |
+| Result delivery and lifecycle notices | Native router adapter, scoped origin/default/explicit targets, result `[SILENT]`, idempotent native card subscriptions and node overrides implemented. Transactional schema-3 outbox distinguishes acknowledged, headless and ambiguous sends. Cross-profile routers are refused; Windows local-file and explicit Discord-channel delivery passed live acceptance | U6; `notifications.py`, `origin.py`, pinned reference fixtures and native capture-only verifier; hwp-6pu.9 |
 | OpenSecondBrain | Partial presence/config badge only; no actual status probe, write policy, event writes or retrospectives | `api.py` `/o2b-status`; U7; hwp-6pu.11 |
 | Telemetry and dangerous-command approvals | Partial final token/duration aggregates and worker-stage diagnostics; native live observers and approval-request UI integration are absent | `agent_worker.py`, `executor.py`; U8; hwp-6pu.12 |
 | Traces and log export | Partial SQLite lifecycle events included on export when enabled; not upstream redacted JSONL event/marker/attempt coverage | `api.py`, `db.py`; U8; hwp-6pu.12 |
@@ -333,6 +333,92 @@ restored byte-for-byte, the provider stopped, sensitive backup copies removed
 and the fixture workflow disabled. Git checkouts and history remain intact;
 audit and proof images are in `.cache/dashboard-check/worktrees-live-qa/`.
 Remote worktree acceptance remains part of the final parity gate.
+
+The delivery checkpoint (2026-11-01) adds a transactional schema-3 notification
+outbox, profile-local gateway/session capture, and native Kanban subscriptions.
+The native adapter uses installed `hermes_cli.kanban_db_notify.add_notify_sub`;
+the pinned public `kanban_db` export no longer exists on the current host.
+Origin routing retains thread/reply anchors and is not accepted from public run
+request bodies. Explicit/default/origin target choice, case-sensitive `[SILENT]`
+and latest-output selection match 18 frozen decisions extracted directly from
+the pinned Python source, with SHA-256 provenance. A bare platform target uses
+the native configured home channel. Native send results are checked, including
+nested failures; scheduling a coroutine alone never counts as delivery.
+
+Twenty notification/subscription tests cover normal polling deduplication,
+headless recovery, stale review/cancel/retry fences, profile scope, subscription
+policy overrides, concurrent dispatch, acknowledgement loss and real process
+death after sending. Full 157-test suites passed on Windows Python 3.11 and
+managed Python 3.14 without optional packages (three skips on 3.14). The actual
+directory loader, HTTP review/loop contracts, all eight asset hashes and four
+dashboard-loader tests passed. `verify_native_notifications.py` passed on both
+runtimes using temporary profiles, the real native router and subscription
+helper, capture-only messaging adapters and zero model workers/external sends.
+It verified thread routing, configured home delivery, unknown-platform refusal
+and a stable native subscription cursor after repeated subscription.
+
+Intentional boundaries: run notices wait for a same-profile in-process router,
+which is captured on a gateway turn. Multiplex hosts exposing only another
+profile's router are refused. Newly created cards subscribe after publication
+(the pinned native cursor semantics can miss an immediate completion in that
+window). A send with an uncertain result becomes `unknown` rather than being
+automatically repeated, unlike pinned fail-open retry bookkeeping. The REST
+reconciliation endpoint records a destination-verified outcome without resending.
+Pending notices are superseded on retry/cancel or resolution of the underlying
+attention state. Waiting text does not advertise automatic chat reply routing,
+which remains **hwp-6pu.10**. Schema-3 activation needs a coordinated refresh of
+all embedded workflow hosts. Real messaging-account acceptance has not been
+performed and requires an explicitly authorized disposable destination.
+
+Post-restart default-profile activation was checked on November 1. The gateway
+had migrated the live database to schema 3 before the smoke fixture was created;
+both stale dashboard processes and the subscription proxy were then refreshed.
+The authenticated web dashboard started and approved the worker-free
+`delivery-restart-smoke-6028a52e39b2` run. Its notification REST route returned
+the obsolete waiting notice as superseded and the completion notice as pending,
+with zero send attempts, consistent with no captured gateway router after
+restart. This verifies resident execution and queue/API activation, not actual
+delivery. Only `local` was permitted. The fixture was disabled and its unsent
+local notice explicitly retired during cleanup; previous worktree-run history
+remained completed. Evidence is in
+`.cache/dashboard-check/delivery-restart-smoke/`. No model workers or external
+messages were invoked. A real gateway-chat delivery check is still outstanding.
+
+Live local-file delivery subsequently passed after the user sent a messaging
+gateway `/workflow list` turn. The fresh worker-free run
+`delivery-file-live-qa-b430351e1f90` completed and its sole completion notice
+`2fb10bbf350b596ea0845d623e1da68f` was acknowledged `sent`, with one attempt and
+no error. The resident gateway's native router wrote exactly one Markdown file
+under `cron/output/workflow-2fb10bbf350b596ea0845d623e1da68f/`; its body contained
+the expected synthetic completion notice. Subsequent polling left one notice,
+one send attempt and one artifact. The authenticated notification API reported
+the same acknowledgement. The fixture was disabled, preserving the file and run
+history. Audit, copied output and dashboard proof are in
+`.cache/dashboard-check/delivery-file-live-qa/`. No model worker or external
+messaging destination was used. Delivery into a real chat/thread remains a
+separate explicitly authorized acceptance check.
+
+The user then authorized `#hermes` or `#hermes-platform` for messaging acceptance.
+Read-only Discord discovery verified the exact `#hermes-platform` channel before
+the web dashboard started `synthetic-notification-test-cd43d4bc33d1`. Its only
+finish node produced one synthetic completion notice, acknowledged `sent` with
+one attempt and no error. Discord readback verified the exact notice body,
+channel and expected Hermes bot author, with one matching message. Additional
+polling left one notice/attempt/message. The fixture was disabled; the posted
+message and run history remain available. Evidence and the verified message link
+are in `.cache/dashboard-check/delivery-discord-live-qa/`. No model worker was
+launched. This covers explicit channel delivery; live captured-origin/thread
+delivery and chat reply review routing remain separate acceptance work.
+
+Final merge review reproduced a router-replacement race: validation inspected
+one `gateway.delivery_router`, but the async send looked up the property again.
+The sender now snapshots the validated router and owner loop for the entire
+send. The added regression failed before the fix and passes afterwards without
+calling the replacement foreign-profile router. Full 158-test suites passed on
+Windows Python 3.11 and managed Python 3.14 (three optional skips on 3.14), as did
+native capture-only notification checks on both runtimes, real directory-loader
+and HTTP review/loop contracts, lint, eight asset hashes and four loader tests.
+The already-running hosts need a restart to load this final snapshot fix.
 
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner

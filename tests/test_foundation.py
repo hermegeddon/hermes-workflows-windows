@@ -97,7 +97,7 @@ class StorageTests(unittest.TestCase):
         self.assertIn('"type": "original"', db.trace("legacy"))
         self.assertEqual(db.attempts("legacy")[0]["data"], state["nodes"]["done"])
         with db.connect() as con:
-            self.assertEqual(con.execute("SELECT version FROM py_metadata").fetchone()[0], 2)
+            self.assertEqual(con.execute("SELECT version FROM py_metadata").fetchone()[0], 3)
         Database(self.path)
         self.assertEqual(len(db.attempts("legacy")), 1)
 

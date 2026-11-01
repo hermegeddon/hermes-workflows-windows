@@ -348,6 +348,16 @@ class AdoptionExecutor:
                     ]
                     plan["driven"] = remaining[:1] if plan["sequential"] else remaining
                     for identity in plan["driven"]:
+                        self.kb.subscribe(
+                            node,
+                            run,
+                            board,
+                            identity,
+                            owner=owner,
+                            revision=revision,
+                            attempt_id=attempt_id,
+                            path=plan["path"],
+                        )
                         receipt = self.action(plan, identity, "adopt", args)
                         if receipt.get("workspace"):
                             plan["worktrees"][identity] = receipt["workspace"]
@@ -377,6 +387,9 @@ class AdoptionExecutor:
                         if not receipt or not latest or latest["id"] <= receipt["baseline_run"]:
                             result = None
                     results.append(result)
+                plan["blocked"] = [
+                    identity for identity, status, _ in statuses if status == "blocked"
+                ]
                 self.save(plan, args)
                 if all(result is not None for result in results):
                     plan["failed"] |= any(result.outcome == "failure" for result in results)

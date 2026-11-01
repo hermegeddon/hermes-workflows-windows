@@ -20,6 +20,7 @@ from .db import TERMINAL, ConflictError
 from .effects import EffectStore
 from .executor import Result
 from .native import NativeUnavailable
+from .notifications import parse_origin
 from .worktrees import Worktrees
 
 log = logging.getLogger(__name__)
@@ -129,6 +130,56 @@ class KanbanExecutor:
         if state["status"] in TERMINAL or state["nodes"][node_id].get("attempt_id") != attempt_id:
             raise ConflictError("Kanban attempt was superseded")
         return state
+
+    def subscribe(self, node, run, board, task_id, *, owner, revision, attempt_id, path=None):
+        preference = node.get("notify_completion")
+        workflow = self.db.get_spec(run["run_id"])
+        enabled = (
+            preference
+            if preference is not None
+            else workflow.get("notifications", {}).get("subscribe_cards", True)
+        )
+        origin = parse_origin(run.get("origin"))
+        if not enabled or not origin:
+            return
+        try:
+            with self.db.connect(write=True) as workflow_conn:
+                self.db._owned_row(
+                    workflow_conn, run["run_id"], owner, revision, (node["id"], attempt_id)
+                )
+                self._current(run["run_id"], owner, revision, node["id"], attempt_id)
+                with self.board(board, expected=path) as (_, conn, _):
+                    profile = (
+                        self.host.home.name
+                        if self.host.home.parent.name == "profiles"
+                        else "default"
+                    )
+                    self.host.module("notify").add_notify_sub(
+                        conn,
+                        task_id=task_id,
+                        platform=origin[0],
+                        chat_id=origin[1],
+                        thread_id=origin[2],
+                        notifier_profile=profile,
+                        **run.get("notification_context", {}).get("routing", {}),
+                    )
+        except ConflictError:
+            raise
+        except Exception as exc:
+            code = f"card_subscription:{type(exc).__name__}"
+
+            def record(state):
+                errors = state["nodes"][node["id"]].setdefault("notification_errors", [])
+                if code not in errors:
+                    errors.append(code)
+
+            self.db.mutate_run(
+                run["run_id"],
+                record,
+                owner=owner,
+                revision=revision,
+                attempt=(node["id"], attempt_id),
+            )
 
     @staticmethod
     def _check(task, key, workflow_id, node_id):
@@ -313,6 +364,16 @@ class KanbanExecutor:
             revision=revision,
             attempt=(node["id"], attempt_id),
         )
+        self.subscribe(
+            node,
+            run,
+            board,
+            task_id,
+            owner=owner,
+            revision=revision,
+            attempt_id=attempt_id,
+            path=path,
+        )
         return handle
 
     async def execute(self, node, run, board, *, owner, revision, attempt_id, timeout):
@@ -353,6 +414,15 @@ class KanbanExecutor:
                         (handle["task_id"],),
                     ).fetchone()
                     result = completion(task, latest)
+                self.db.mutate_run(
+                    run["run_id"],
+                    lambda r, status=task["status"]: r["nodes"][node["id"]].update(
+                        native_status=status
+                    ),
+                    owner=owner,
+                    revision=revision,
+                    attempt=(node["id"], attempt_id),
+                )
                 if result is not None:
                     return result
                 if time.time() - started >= timeout:

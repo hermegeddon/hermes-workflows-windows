@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import os
 import time
 import uuid
 from graphlib import TopologicalSorter
@@ -75,6 +76,8 @@ class Engine:
         input: str | None = None,
         params: dict | None = None,
         run_id: str | None = None,
+        origin: str | None = None,
+        origin_metadata: dict | None = None,
     ) -> dict:
         require_valid(workflow)
         if not workflow.get("enabled", True):
@@ -86,6 +89,8 @@ class Engine:
             raise ValueError("input must be a string")
         if project_id is not None and not isinstance(project_id, str):
             raise ValueError("project_id must be a string")
+        if origin is not None and (not isinstance(origin, str) or not origin.strip()):
+            raise ValueError("origin must be a non-empty string")
         board = board_for(workflow, project_id)
         state = {
             "run_id": run_id or f"{workflow['id']}-{uuid.uuid4().hex[:12]}",
@@ -96,7 +101,16 @@ class Engine:
             "finished_at": None,
             "nodes": {n["id"]: _initial_node(n) for n in workflow["nodes"]},
             "params": fill_params(workflow, params if params is not None else {}),
+            "notification_context": {
+                "home": str(self.executor.home or self.db.path.parent.parent),
+                "default": config["default_deliver"]
+                or os.environ.get("HERMES_WORKFLOWS_DELIVER")
+                or None,
+                "routing": copy.deepcopy(origin_metadata or {}),
+            },
         }
+        if origin:
+            state["origin"] = origin
         if workflow_path:
             state["workflow_path"] = workflow_path
         if project_id or board:

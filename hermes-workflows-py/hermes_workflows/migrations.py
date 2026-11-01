@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 V1 = """
 CREATE TABLE py_runs (
@@ -46,6 +46,18 @@ CREATE TABLE py_effects (
     handle TEXT, result TEXT, created_at REAL NOT NULL, updated_at REAL NOT NULL,
     UNIQUE(run_id,effect_key)
 );
+"""
+
+V3 = """
+CREATE TABLE py_notifications (
+    notice_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES py_runs(run_id),
+    revision INTEGER NOT NULL, notice_key TEXT NOT NULL, payload TEXT NOT NULL,
+    status TEXT NOT NULL, owner TEXT, lease_until REAL NOT NULL DEFAULT 0,
+    error TEXT, attempts INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL, updated_at REAL NOT NULL,
+    UNIQUE(run_id,notice_key)
+);
+CREATE INDEX py_notifications_pending ON py_notifications(status,created_at);
 """
 
 
@@ -95,3 +107,7 @@ def migrate(con):
                     ),
                 )
         con.execute("UPDATE py_metadata SET version=2")
+        version = 2
+    if version == 2:
+        statements(con, V3)
+        con.execute("UPDATE py_metadata SET version=3")

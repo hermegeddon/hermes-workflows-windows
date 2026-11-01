@@ -468,12 +468,67 @@ config, delivery and hook APIs during verification. A headless probe has no live
 delivery router; API availability is not a claim that those integrations execute
 in this backend yet.
 
+### Result delivery and notifications
+
+Set a workflow's `deliver` to a Hermes delivery target such as
+`discord:channel:thread`, `telegram:chat`, `discord` (its configured home channel),
+`local`, or `origin`. An explicit target wins over the captured origin; `origin`
+or an omitted target uses the origin, then the profile's **Notifications →
+default_deliver** setting, then `HERMES_WORKFLOWS_DELIVER`. With no target, notices
+are suppressed. A declared `deliver` sends the latest completed node's output
+when the run completes; otherwise the message is a short lifecycle notice.
+The case-sensitive `[SILENT]` marker suppresses that result message.
+
+The `pre_gateway_dispatch` hook captures model-started runs' chat/thread routing
+and reply anchors, keyed by the tool turn's session identity. Dashboard, CLI and
+unmatched session keys have no inferred origin and use the configured fallback.
+Public run-request bodies cannot supply or spoof an origin. Human-review,
+completed/failed, blocked-card and stuck-adoption notices have durable identities;
+review loop iterations have separate attempt identities. Review notices currently
+direct the operator to the dashboard or `/workflow review`; automatic chat-reply
+review routing is a separate implementation phase.
+
+Native cards subscribe their origin to the host notifier by default. Set
+`notifications: {"subscribe_cards": false}` on the workflow to silence card
+notices, and use a node's `notify_completion: true` or `false` to override that
+policy. This does not affect run notices. Native subscriptions are idempotent
+and initialize at the current native event cursor; they do not replay old card
+history. A newly created card is subscribed after publication, as in pinned
+upstream, so an exceptionally fast external completion in that window can be
+missed by the card notifier. Run-level delivery remains independent.
+
+The schema-3 SQLite outbox commits notices with their run-state transitions.
+Only an in-process gateway router bound to the same profile sends them, on its
+own event loop. Headless notices remain pending until such a router is captured
+by a gateway turn. A router whose native output directory belongs to another
+profile is refused, including multiplex hosts that expose only a default-profile
+router. No router, account or channel is synthesized as a fallback.
+
+Inspect `GET /runs/{run_id}/notifications` under the plugin API prefix. Records
+report `pending`, `sent`, `suppressed`, `superseded`, `unknown` or `failed`,
+separately from the workflow outcome. A send is marked `sent` only after native
+success acknowledgement. Timeout, cancellation, router failure or process death
+after admission makes the outcome ambiguous: it becomes `unknown` (after the
+60-second admission lease expires following a crash) and is never automatically
+resent. After verifying the destination, use
+`POST /runs/{run_id}/notifications/{notice_id}/reconcile` with
+`{"delivered": true}` or `{"delivered": false}` to record the outcome; this
+operation never sends a message. Cancellation cannot recall an already admitted
+send. Retry/cancel supersedes pending notices from the old execution.
+
+`scripts/verify_native_notifications.py --hermes-source <checkout>` verifies the
+installed native router and subscriptions in temporary profiles using only
+capture adapters, with no model calls or external messages. Restart all workflow
+hosts together (gateway, dashboards and any proxy embedding the plugin) when
+upgrading to schema 3; older backend generations cannot open the new schema.
+Historical runs without notification context do not acquire retrospective sends.
+
 The dashboard's current client routes are implemented, but the Python backend
 does not reproduce every upstream integration. Bound project agent tasks use
 native Kanban; global and explicitly off-board tasks execute directly. Adoption
 and managed worktrees require a bound project board. Stacked adoption advances
 an already-checked-out shared branch by fast-forward only.
-Conditional loop edges are implemented. Workflow result delivery and
+Conditional loop edges and native workflow result delivery are implemented.
 OpenSecondBrain writes are not implemented. The O2B badge reports local
 installation/configuration only. Event triggers remain declarative, as upstream;
 an external system can start a run through the run route.

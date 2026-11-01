@@ -52,12 +52,17 @@ TOOL_SCHEMAS = {
 }
 
 
-def _tool(name, args, home=None):
+def _tool(name, args, home=None, *, task_id=None):
     from .api import API, BASE
     from .runtime import get_runtime
 
     args = args or {}
-    api = API(get_runtime(home))
+    runtime = get_runtime(home)
+    api = API(
+        runtime,
+        origin=runtime.origins.origin_for(task_id),
+        origin_metadata=runtime.origins.routing_for(task_id),
+    )
     if name == "workflow_list":
         return api.handle("GET", BASE + "/workflows")
     if name == "workflow_run":
@@ -80,9 +85,9 @@ def _tool(name, args, home=None):
 
 
 def _handler(name, home=None):
-    def handle(args=None, **_kwargs):
+    def handle(args=None, **kwargs):
         try:
-            status, result = _tool(name, args, home)
+            status, result = _tool(name, args, home, task_id=kwargs.get("task_id"))
             if status >= 400:
                 result = {"error": result["detail"], "status_code": status}
             return json.dumps(result, ensure_ascii=False)
@@ -133,7 +138,7 @@ def _command(raw_args="", *, home=None, **_kwargs):
         if sub == "cancel":
             status, result = API(get_runtime(home)).handle("POST", f"/runs/{args['run_id']}/cancel")
         elif sub in ("list", "run", "status", "review", "explain"):
-            status, result = _tool("workflow_" + sub, args, home)
+            status, result = _tool("workflow_" + sub, args, home, task_id=_kwargs.get("task_id"))
         else:
             return usage
         return json.dumps(result, ensure_ascii=False)
@@ -156,6 +161,9 @@ def register(ctx):
     # another workflow supervisor while performing one node of a parent run.
     if os.environ.get("HERMES_WORKFLOWS_WORKER") != "1":
         runtime = get_runtime(home)
+        register_hook = getattr(ctx, "register_hook", None)
+        if callable(register_hook):
+            register_hook("pre_gateway_dispatch", runtime.origins.capture)
         on_unload = getattr(ctx, "on_unload", None)
         if callable(on_unload):
             on_unload(own_runtime(runtime))

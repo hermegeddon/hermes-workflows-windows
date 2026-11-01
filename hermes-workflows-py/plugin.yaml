@@ -3,7 +3,8 @@ version: "1.0.2"
 description: "Windows-native Python DAG workflows for Hermes Agent."
 author: "Hermes Workflows Python contributors"
 kind: standalone
-provides_hooks: []
+provides_hooks:
+  - pre_gateway_dispatch
 provides_tools:
   - workflow_list
   - workflow_run

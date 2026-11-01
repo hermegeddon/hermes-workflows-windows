@@ -179,6 +179,9 @@ class Database:
             self._sync_attempts(
                 con, json.loads(before), state, next_revision, restart_attempts or {}
             )
+            from .notifications import enqueue
+
+            enqueue(con, state, spec or json.loads(row["spec"]), next_revision)
             encoded = json.dumps(state)
             try:
                 con.execute(

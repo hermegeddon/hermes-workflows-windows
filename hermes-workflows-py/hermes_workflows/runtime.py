@@ -17,6 +17,9 @@ from pathlib import Path
 from .db import ConflictError, Database, hermes_home
 from .engine import Engine
 from .executor import Executor
+from .native import NativeHost
+from .notifications import Notifications
+from .origin import NativeSender, Origins
 from .schedules import Cron, iso_now
 from .specs import SpecStore
 
@@ -33,6 +36,10 @@ class Runtime:
         self.db = db or Database()
         self.specs = specs or SpecStore()
         self.engine = Engine(self.db, executor)
+        self.home = self.db.path.parent.parent.resolve()
+        self.engine.executor.home = self.engine.executor.home or self.home
+        self.origins = Origins(NativeHost(self.home))
+        self.notifications = Notifications(self.db, self.home, NativeSender(self.origins))
         self.owner = uuid.uuid4().hex
         self.thread: threading.Thread | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -85,6 +92,7 @@ class Runtime:
                 log.warning("invalid workflow schedule: %s", detail["path"])
         self._ready.set()
         tasks = {}
+        delivery_task = None
         last_schedules = 0.0
         try:
             while not self._stop.is_set():
@@ -116,16 +124,27 @@ class Runtime:
                     except Exception:
                         log.exception("schedule tick failed")
                     last_schedules = time.monotonic()
+                    if delivery_task is None or delivery_task.done():
+                        if delivery_task is not None:
+                            try:
+                                delivery_task.result()
+                            except Exception:
+                                log.exception("notification dispatch failed")
+                        delivery_task = asyncio.create_task(self.notifications.dispatch())
                 try:
                     await asyncio.wait_for(self._stop.wait(), timeout=0.1)
                 except TimeoutError:
                     pass
         finally:
+            if delivery_task:
+                delivery_task.cancel()
+                await asyncio.gather(delivery_task, return_exceptions=True)
             for task in tasks.values():
                 task.cancel()
             await asyncio.gather(*tasks.values(), return_exceptions=True)
 
     def close(self):
+        self.origins.clear()
         with self._lock:
             self._closed = True
         # A concurrent registration may still be starting its event loop.
