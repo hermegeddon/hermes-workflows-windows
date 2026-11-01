@@ -45,10 +45,10 @@ Local implementation evidence is in
 | Iterations, attempts and external-effect recovery | Foundation implemented: transactional schema-2 migration, run revision and node-attempt identities/history, durable handles, unique driver leases, stale-result fences and explicit unknown-effect reconciliation. Loop traversal now uses these identities; native integration dispatch remains separate work | `migrations.py`, `db.py`, `effects.py`, `Engine.drive`, `test_foundation.py`; hwp-6pu.4 |
 | Script nodes | Implemented with enable gate, environment allowlist, timeout and process-tree cancellation; native CMD/PowerShell/Unicode tests pass | `executor.py`; retain coverage during hwp-6pu.5 and hwp-6pu.16 |
 | Direct agent nodes | Implemented with profile/model/skills, bounded isolated Python worker, final output and transient retries | `agent_worker.py`, `Executor`, agent-result fixtures; retain global and `board=false` execution during hwp-6pu.6 |
-| Default project agent execution | Missing native Kanban path: current compile preview marks every agent `off_board: true` and execution is direct | U1/U4 default project nodes to native cards. hwp-6pu.6 |
-| Board/project resolution and task links | Missing native board auto-ensure, dispatcher ownership and project dependency links | U4/U5; hwp-6pu.6, hwp-6pu.7 |
+| Default project agent execution | Implemented native card creation/polling, profile/model/skills/runtime/retry options, workflow metadata and durable handles. Global, unbound and `board:false` nodes remain direct; unrepresentable overrides fail explicitly | `kanban.py`, `Engine`, compile-preview routing and native/isolated tests; hwp-6pu.6 |
+| Board/project resolution and task links | Explicit run project wins over declared first project; missing boards auto-ensure and archived boards fail. Existing gateway dispatcher owns claims/caps. Dependency links for adoption remain missing | `board_for`, scoped native connections; hwp-6pu.6, hwp-6pu.7 |
 | Adopted cards | Missing: `adopt` is rejected; task-id extraction, card review, dependency ordering, sequential scopes and stuck/blocked handling are absent | U3/U4 and `test_engine_adopt.py`; hwp-6pu.7 |
-| Managed scratch/worktree workspaces and stacked branches | Partial: explicit `workdir` works; host-managed workspace lifecycle is absent and worktree/stack is rejected | U4 and `test_dispatch_worktree_conformance.py`, `test_adopt_branch_anchor.py`; hwp-6pu.8 |
+| Managed scratch/worktree workspaces and stacked branches | Native board cards use dispatcher-managed scratch or explicit dir workspaces. Worktree/stack is still rejected | U4 and `test_dispatch_worktree_conformance.py`, `test_adopt_branch_anchor.py`; hwp-6pu.8 |
 | Prompt nodes and ancestor input references | Implemented for DAGs/cycles with runtime channel-availability checks and single-pass named mapping substitution; unavailable current-iteration values fail rather than becoming empty text | `specs.resolve`, `Engine._execute`, loop input fixtures; hwp-6pu.5 |
 | Human review through API, tool, CLI, web and Desktop | Implemented with allowed decisions, notes and immutable run-spec review options; maintained web/Desktop clients fence requests with attempt IDs and handle fast re-entry/late acknowledgements | Review loop/restart/stale-token tests. Re-entry clears old decisions instead of retaining the pinned upstream value; hwp-6pu.5 |
 | Chat reply review routing | Missing: no captured origin or uniquely-waiting-gate `pre_gateway_dispatch` hook | U6; hwp-6pu.10 |
@@ -56,7 +56,7 @@ Local implementation evidence is in
 | Single-flight, cancel and retry | Implemented with leases and explicit node/full retry; external native work and upstream `resume` default-selection semantics remain partial | `db.py`, `Engine.retry`, `cli.py`; U3; hwp-6pu.4, hwp-6pu.15 |
 | Cron and schedule actions | Functional Python scheduler and SQLite schedules; not native Hermes Cron registration/tagging | `schedules.py`, `runtime.py`, schedule/restart tests; U5; hwp-6pu.14 |
 | Event trigger declarations | Declared and validated. Automatic webhook/GitHub/API-event-to-run wiring is absent in both pinned upstream and this backend | U1 explicitly defers host event firing. Preserve declarations in hwp-6pu.5; actual event firing is an extension, not missing pinned parity |
-| Kanban lifecycle advance | Missing native completed/blocked hooks and owned-card lookup; current direct workers advance through the Python runtime | U5; hwp-6pu.6. Keep a Python-native recovery path instead of copying POSIX detached commands |
+| Kanban lifecycle advance | Python supervisor polls owned cards and native final run summaries, resumes the same attempt on restart, and reconciles terminal/superseded card cleanup. Blocked cards wait up to the persisted node deadline; lifecycle hooks are not required for progress | U5; `KanbanExecutor`, native/isolated tests; hwp-6pu.6. No POSIX detached commands |
 | Result delivery and lifecycle notices | Missing native router, run origin/default target, `[SILENT]`, per-card subscription defaults and node overrides | U6; hwp-6pu.9 |
 | OpenSecondBrain | Partial presence/config badge only; no actual status probe, write policy, event writes or retrospectives | `api.py` `/o2b-status`; U7; hwp-6pu.11 |
 | Telemetry and dangerous-command approvals | Partial final token/duration aggregates and worker-stage diagnostics; native live observers and approval-request UI integration are absent | `agent_worker.py`, `executor.py`; U8; hwp-6pu.12 |
@@ -153,6 +153,57 @@ inspection confirmed two distinct review attempt identities, iteration 1, and
 separate persisted notes for needs_changes and approved. No provider calls or
 shell execution were involved. This completes the local Desktop loop gate before
 Kanban work; remote and remaining feature checks still belong to the final matrix.
+
+The Kanban checkpoint adds 16 tests covering direct/board routing, options,
+restart, loop/retry identity, real subprocess death after card commit, ambiguous
+creation acknowledgements, atomic metadata publication, cancellation during an
+uncommitted create, timeout cleanup and profile/path/ownership fences. The full
+96-test suite passed on Windows Python 3.11, Windows Python 3.14 without optional
+packages (two skips), and macOS Python 3.14 without optional packages (six skips).
+`scripts/verify_native_kanban.py` also passed against the installed native APIs
+on Windows and macOS in temporary homes. The real native dispatcher claimed cards
+under a concurrency cap and native completion APIs persisted final summaries;
+an injected spawn callback launched zero model workers.
+
+Post-restart Windows acceptance then exercised two real native workers on the
+disposable `workflow-qa-live` board, assigned to the dedicated `workflow-qa`
+profile. A scripted localhost provider supplied deterministic tool/model replies;
+no paid model calls were made. The web dashboard started the run and requested
+changes after the first native result. Loop re-entry created exactly one new card
+and attempt. The second worker committed context compression, then delivered the
+same exact result marker through native `task_runs.summary`. Desktop approved
+the fresh review and both frontends showed completion. Read-only checks confirmed
+two cards, two worker attempts, two native runs and two review decisions, with
+distinct handles and preserved notes. This host compressed in place; a live
+session-ID rotation on an older Hermes build was not claimed. One Desktop
+approval request encountered ECONNRESET; retry succeeded without duplicating the
+decision. The QA profile's original config and environment were restored exactly,
+the local provider was stopped, and the disposable workflow was disabled while
+retaining cards/history. Screenshots and the acceptance report are in the ignored
+`.cache/dashboard-check/kanban-live-qa/` directory.
+
+This check also found that an implicitly selected project was missing from the
+run-list project column. New runs now retain that binding in `project_id`, covered
+by explicit and implicit project regression assertions. Existing run snapshots
+are preserved. After a gateway restart, native Desktop started a project-scoped
+finish-only workflow and displayed `workflow-qa-live` in the completed run's
+Project column. Read-only checks confirmed the persisted project and board;
+the two prior cards and native worker runs were unchanged. The fixture was then
+disabled. Evidence is in `.cache/dashboard-check/project-label-check.json` and
+`project-label-desktop.png`; no worker or model calls were needed.
+
+Final review added a regression for a failed native worker whose summary declares
+success: summary tokens classify only completed workers, while explicit native
+metadata retains upstream precedence. The resulting 97-test suite passed on
+Windows Python 3.11 and 3.14 (two optional-dependency skips on 3.14). The installed
+native check now also restarts the supervisor before completion, verifies the
+same cards and attempt identities, then cancels a separate queued run through
+the native archive API without touching the completed cards. It passed with both
+Windows runtimes and launched zero model workers. Its polling phases now have
+independent deadlines and report the last state on timeout. Native plugin
+registration, unload, dashboard mounting, review and loop-review HTTP checks also
+passed with the Hermes-managed runtime. Lint, all eight asset hashes and the four
+dashboard-loader tests passed; frontend source and bundles were unchanged.
 
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner

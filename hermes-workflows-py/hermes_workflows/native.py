@@ -15,8 +15,21 @@ from pathlib import Path
 FEATURES = {
     "kanban": (
         "hermes_cli.kanban_db",
-        ("init_db", "create_board", "list_boards", "create_task", "get_task", "claim_review_task"),
+        (
+            "init_db",
+            "create_board",
+            "list_boards",
+            "create_task",
+            "get_task",
+            "claim_review_task",
+            "write_txn",
+            "kanban_db_path",
+            "kanban_home",
+            "board_dir",
+            "archive_task",
+        ),
     ),
+    "kanban_store": ("hermes_cli.kanban_db_connect", ("connect", "write_txn")),
     "dispatch": ("hermes_cli.kanban_db_dispatch", ("dispatch_once",)),
     "worktrees": ("hermes_cli.worktree_ops", ("_setup_worktree", "removal_blocked")),
     "cron": ("cron.jobs", ("create_job", "list_jobs", "update_job", "remove_job")),
@@ -55,7 +68,9 @@ class NativeHost:
             try:
                 selected = Path(get_home()).resolve()
             except Exception as exc:
-                raise NativeUnavailable("Hermes could not resolve the selected profile home") from exc
+                raise NativeUnavailable(
+                    "Hermes could not resolve the selected profile home"
+                ) from exc
             if selected != self.home:
                 raise NativeUnavailable("Hermes did not select the requested profile home")
             yield
@@ -72,6 +87,12 @@ class NativeHost:
         if not callable(target):
             raise NativeUnavailable(f"installed Hermes lacks callable {feature}.{operation}")
         return target
+
+    def module(self, feature):
+        """Use inside scope() when native operations must share a connection."""
+        for operation in FEATURES[feature][1]:
+            self._operation(feature, operation)
+        return self.loader(FEATURES[feature][0])
 
     def call(self, feature, operation, *args, **kwargs):
         with self.scope():

@@ -64,6 +64,11 @@ def validate(workflow: dict) -> dict:
     scope = workflow.get("scope", {})
     if not isinstance(scope, dict) or scope.get("type") not in ("global", "project", "projects"):
         err("invalid_scope", "scope.type must be global, project or projects")
+    elif "projects" in scope and (
+        not isinstance(scope["projects"], list)
+        or not all(isinstance(p, str) and SLUG.fullmatch(p) for p in scope["projects"])
+    ):
+        err("invalid_scope", "scope.projects must contain project slugs")
     defaults = workflow.get("defaults", {})
     if not isinstance(defaults, dict):
         err("invalid_defaults", "defaults must be an object")
@@ -99,6 +104,8 @@ def validate(workflow: dict) -> dict:
         ):
             err("empty_command", f"script '{name}' requires a command")
         if kind == "agent_task":
+            if "board" in node and type(node["board"]) is not bool:
+                err("invalid_board", f"'{name}'.board must be boolean")
             if not isinstance(node.get("prompt"), str):
                 err("invalid_prompt", f"agent_task '{name}' requires a prompt string")
             if not (node.get("profile") or defaults.get("profile")):
@@ -513,7 +520,11 @@ def compile_preview(workflow: dict) -> dict:
                     "workflow_template_id": workflow["id"],
                     "current_step_key": n["id"],
                     "prompt": n["prompt"],
-                    "off_board": True,
+                    **(
+                        {"off_board": True}
+                        if workflow["scope"]["type"] == "global" or n.get("board") is False
+                        else {}
+                    ),
                     **{
                         k: n[k]
                         for k in (

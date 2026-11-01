@@ -312,9 +312,47 @@ do not run different backend versions against the same profile database. A newer
 unknown schema is rejected. Tests cover rollback and simultaneous process startup.
 
 The external-effect journal persists intent before an integration acts. An
-operation left in flight by a lost driver becomes `unknown` and requires explicit
-reconciliation, including when its receipt was lost. It is never automatically
-sent again. This foundation does not yet enable Kanban, delivery or memory writes.
+operation left in flight by a lost driver becomes `unknown` and requires
+reconciliation, including when its receipt was lost. Native Kanban creation can
+reconcile automatically: its stable attempt key is looked up under the board's
+write transaction, including archived cards. Other external operations are not
+automatically sent again. Delivery and memory writes remain unimplemented.
+
+### Native Kanban execution
+
+Agent steps in a bound `project`/`projects` scope create native cards on the
+project's board (the run's `project_id`, otherwise the first `scope.projects`
+entry). A missing board is created; archived boards are not restored implicitly.
+Global workflows, unbound project scopes and nodes with `board: false` use the
+direct runner. A missing native API fails the board step instead of silently
+running it directly. Compile preview reflects the node's routing choice.
+
+Hermes' existing gateway dispatcher claims and executes these cards, applying
+its native concurrency limits. The plugin does not launch another dispatcher or
+worker pool. Keep the gateway and its Kanban dispatcher running for project
+workflows; a standalone workflow CLI/server does not replace that service.
+The normal dispatcher interval can delay a newly queued card.
+
+Cards carry the profile, model, skills, runtime cap, native retry setting and
+workflow/step IDs. An explicit `workdir` uses a native `dir` workspace; otherwise
+the native dispatcher manages a scratch workspace. Managed Git worktrees and
+card adoption remain separate features. Node-specific toolset, token/iteration
+and external-secret overrides are not representable by the installed native
+card API and fail explicitly; use `board: false` for those overrides.
+
+Each logical attempt has a durable card identity and handle. A gateway restart
+resumes polling the same card and preserves its deadline; loop re-entry and
+explicit retry create distinct cards. Completion reads native `task_runs.summary`
+and outcome metadata, without assuming a stable worker session ID. Native
+workers own their retry policy; the Python engine does not retry them again.
+Cancellation, superseded attempts, timeouts and early workflow completion archive
+only cards whose ownership matches the stored attempt. Pending cleanup is retried
+by the existing workflow supervisor. Active cards survive ordinary runtime shutdown.
+
+The maintained web/Desktop controls already expose the node's board toggle.
+After installing this change, restart the gateway and refresh/reopen the workflow
+view before testing. No production cards or model workers were created during
+the automated integration checks.
 
 Native adapter availability can be inspected without executing workflows:
 
@@ -330,9 +368,10 @@ delivery router; API availability is not a claim that those integrations execute
 in this backend yet.
 
 The dashboard's current client routes are implemented, but the Python backend
-does not reproduce every upstream integration. Agent tasks execute directly
-without creating Kanban cards. Card adoption, stacked releases, and managed
-worktree nodes fail validation; use explicit `workdir` paths for direct execution.
+does not reproduce every upstream integration. Bound project agent tasks use
+native Kanban; global and explicitly off-board tasks execute directly. Card
+adoption, stacked releases, and managed worktree nodes fail validation; use
+explicit `workdir` paths for existing directories.
 Conditional loop edges are implemented. Workflow result delivery and
 OpenSecondBrain writes are not implemented. The O2B badge reports local
 installation/configuration only. Event triggers remain declarative, as upstream;

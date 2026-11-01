@@ -112,6 +112,7 @@ class Runtime:
                 if time.monotonic() - last_schedules >= 1:
                     try:
                         await asyncio.to_thread(self.tick_schedules)
+                        await asyncio.to_thread(self.engine.reconcile_external)
                     except Exception:
                         log.exception("schedule tick failed")
                     last_schedules = time.monotonic()

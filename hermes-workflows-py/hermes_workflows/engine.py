@@ -10,10 +10,12 @@ import uuid
 from graphlib import TopologicalSorter
 
 from . import settings as settings_module
-from .db import ACTIVE, NODE_TERMINAL, TERMINAL, ConflictError, Database
+from .db import ACTIVE, NODE_TERMINAL, TERMINAL, ConflictError, Database, hermes_home
 from .effects import EffectStore
 from .executor import Executor, Result
 from .graph import analyse, ancestors
+from .kanban import KanbanExecutor, board_for, on_board
+from .native import NativeHost
 from .specs import REVIEWS, dependencies, fill_params, require_valid, resolve
 
 
@@ -47,6 +49,21 @@ class Engine:
     def __init__(self, db: Database, executor: Executor | None = None):
         self.db = db
         self.executor = executor or Executor()
+        self.kanban = None
+
+    def board_executor(self):
+        if self.kanban is None:
+            self.kanban = KanbanExecutor(self.db, NativeHost(self.executor.home or hermes_home()))
+        return self.kanban
+
+    def reconcile_external(self):
+        # No host imports when there are no native card intents.
+        with self.db.connect() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM py_effects WHERE kind='kanban_card' AND status!='settled' LIMIT 1"
+            ).fetchone()
+        if exists:
+            self.board_executor().cleanup()
 
     def start(
         self,
@@ -68,6 +85,7 @@ class Engine:
             raise ValueError("input must be a string")
         if project_id is not None and not isinstance(project_id, str):
             raise ValueError("project_id must be a string")
+        board = board_for(workflow, project_id)
         state = {
             "run_id": run_id or f"{workflow['id']}-{uuid.uuid4().hex[:12]}",
             "workflow_id": workflow["id"],
@@ -80,8 +98,11 @@ class Engine:
         }
         if workflow_path:
             state["workflow_path"] = workflow_path
-        if project_id:
-            state["project_id"] = project_id
+        if project_id or board:
+            # Keep the implicit project binding visible in run lists too.
+            state["project_id"] = project_id or workflow["scope"]["projects"][0]
+        if board:
+            state["board"] = board
         if input and input.strip():
             state["input"] = input.strip()
         return self.db.create_run(state, workflow, config["max_parallel_runs"])
@@ -95,7 +116,9 @@ class Engine:
                 if state["status"] not in NODE_TERMINAL:
                     state.update(status="cancelled", finished_at=time.time())
 
-        return self.db.mutate_run(run_id, change, event={"type": "run_cancelled"}, invalidate=True)
+        state = self.db.mutate_run(run_id, change, event={"type": "run_cancelled"}, invalidate=True)
+        self.reconcile_external()
+        return state
 
     def review(
         self,
@@ -199,6 +222,7 @@ class Engine:
             spec=workflow,
             invalidate=True,
         )
+        self.reconcile_external()
         return state
 
     @staticmethod
@@ -391,12 +415,15 @@ class Engine:
         last_heartbeat = time.monotonic()
         try:
             EffectStore(self.db).recover(run_id, owner=owner, revision=revision)
+            resuming = []
 
             def recover(run):
                 interrupted = []
                 for name, state in run["nodes"].items():
                     if state["status"] in ("running", "scheduled"):
-                        if state["node_type"] == "wait":
+                        if state.get("executor") == "kanban":
+                            resuming.append(name)
+                        elif state["node_type"] == "wait":
                             state["status"] = "pending"
                         else:
                             state.update(
@@ -419,6 +446,18 @@ class Engine:
             # the recovery snapshot so the next driver loads the retry's spec.
             if recovered["status"] in TERMINAL:
                 return
+            for name in resuming:
+                node = next(n for n in workflow["nodes"] if n["id"] == name)
+                active[name] = asyncio.create_task(
+                    self._execute(
+                        run_id,
+                        owner,
+                        node,
+                        workflow,
+                        revision,
+                        recovered["nodes"][name]["attempt_id"],
+                    )
+                )
             while True:
                 if time.monotonic() - last_heartbeat >= 5:
                     if not self.db.claim(run_id, owner, revision=revision):
@@ -442,6 +481,18 @@ class Engine:
                         if run["status"] in TERMINAL:
                             return
                         run["nodes"][name].update(status="running", started_at=time.time())
+                        raw_node = next(n for n in workflow["nodes"] if n["id"] == name)
+                        if on_board(
+                            raw_node, run.get("board") or board_for(workflow, run.get("project_id"))
+                        ):
+                            run["nodes"][name]["executor"] = "kanban"
+                            run["nodes"][name]["executor_home"] = str(
+                                self.board_executor().host.home
+                            )
+                            run["nodes"][name]["execution_timeout"] = raw_node.get(
+                                "timeout_seconds",
+                                settings_module.values(self.db)["default_timeout_seconds"],
+                            )
                         if run["nodes"][name]["node_type"] == "wait":
                             run["nodes"][name].setdefault("wait_started_at", time.time())
 
@@ -484,9 +535,13 @@ class Engine:
             raise ConflictError("node attempt was superseded")
         try:
             node = copy.deepcopy(raw)
+            board = run.get("board") or board_for(workflow, run.get("project_id"))
+            native_card = on_board(raw, board)
             node.setdefault("profile", workflow.get("defaults", {}).get("profile"))
             if workflow.get("defaults", {}).get("model"):
                 node.setdefault("model", workflow["defaults"]["model"])
+            if "max_retries" in workflow.get("defaults", {}):
+                node.setdefault("max_retries", workflow["defaults"]["max_retries"])
             for key in ("command", "workdir"):
                 if key in node:
                     node[key] = resolve(node[key], run)
@@ -521,6 +576,8 @@ class Engine:
             for attempt in range(retries + 1):
                 try:
                     timeout = node.get("timeout_seconds", config["default_timeout_seconds"])
+                    if native_card:
+                        timeout = run["nodes"][node["id"]].get("execution_timeout", timeout)
                     if node["type"] == "wait":
                         timeout -= time.time() - run["nodes"][node["id"]].get(
                             "wait_started_at", time.time()
@@ -529,14 +586,36 @@ class Engine:
                     # need a short window to reap children and report the stage.
                     grace = 2 if node["type"] in ("agent_task", "script") else 0
                     async with asyncio.timeout(max(0.001, timeout + grace)):
-                        result = await self.executor.execute(node, run, config)
+                        if native_card:
+                            result = await self.board_executor().execute(
+                                node,
+                                run,
+                                board,
+                                owner=owner,
+                                revision=revision,
+                                attempt_id=attempt_id,
+                                timeout=timeout,
+                            )
+                        else:
+                            result = await self.executor.execute(node, run, config)
                 except Exception as exc:
                     result = Result("failure", error=f"{type(exc).__name__}: {exc}")
                 # Replaying deterministic shell commands after errors can repeat
                 # side effects. Automatic retries apply only to transient agents.
-                transient = node["type"] == "agent_task" and any(
-                    v in (result.error or "").lower()
-                    for v in ("429", "503", "502", "overloaded", "rate limit", "connection reset")
+                transient = (
+                    node["type"] == "agent_task"
+                    and not native_card
+                    and any(
+                        v in (result.error or "").lower()
+                        for v in (
+                            "429",
+                            "503",
+                            "502",
+                            "overloaded",
+                            "rate limit",
+                            "connection reset",
+                        )
+                    )
                 )
                 if result.outcome != "failure" or not transient or attempt == retries:
                     break
@@ -587,3 +666,5 @@ class Engine:
             attempt=(raw["id"], attempt_id),
             event={"type": "node_completed", "node_id": raw["id"], "outcome": result.outcome},
         )
+        if native_card:
+            self.reconcile_external()
