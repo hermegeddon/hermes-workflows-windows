@@ -8,6 +8,7 @@ import json
 import os
 import time
 import uuid
+from functools import partial
 from graphlib import TopologicalSorter
 
 from . import settings as settings_module
@@ -143,6 +144,7 @@ class Engine:
         note: str | None = None,
         *,
         attempt_id: str | None = None,
+        _chat_reply: dict | None = None,
     ) -> dict:
         if decision not in REVIEWS:
             raise ValueError("decision must be approved, rejected or needs_changes")
@@ -172,12 +174,22 @@ class Engine:
                 state["review_note"] = note
             run["status"] = "running"
 
+        event = {"type": "review", "node_id": node_id, "decision": decision}
+        guard = None
+        if _chat_reply is not None:
+            from .gate_reply import guard_reply
+
+            if attempt_id is None:
+                raise ValueError("chat reviews require an attempt identity")
+            event["chat_reply_id"] = _chat_reply["identity"]
+            guard = partial(guard_reply, node_id=node_id, reply=_chat_reply)
         state = self.db.mutate_run(
             run_id,
             change,
-            event={"type": "review", "node_id": node_id, "decision": decision},
+            event=event,
             revision=revision,
             attempt=(node_id, attempt_id) if attempt_id is not None else None,
+            guard=guard,
         )
         return {
             "run_id": run_id,

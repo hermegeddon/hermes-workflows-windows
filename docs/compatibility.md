@@ -51,7 +51,7 @@ Local implementation evidence is in
 | Managed scratch/worktree workspaces and stacked branches | Native board cards support scratch, dir and pre-materialized linked worktrees. Adopted stacks persist branch context and replayable fast-forward barriers; dirty/mismatched/conflicting/locked trees fail without destructive repair. Windows web/Desktop acceptance passed with real native workers and commits | U4, `test_worktrees.py`, `verify_native_worktrees.py`; hwp-6pu.8 |
 | Prompt nodes and ancestor input references | Implemented for DAGs/cycles with runtime channel-availability checks and single-pass named mapping substitution; unavailable current-iteration values fail rather than becoming empty text | `specs.resolve`, `Engine._execute`, loop input fixtures; hwp-6pu.5 |
 | Human review through API, tool, CLI, web and Desktop | Implemented with allowed decisions, notes and immutable run-spec review options; maintained web/Desktop clients fence requests with attempt IDs and handle fast re-entry/late acknowledgements | Review loop/restart/stale-token tests. Re-entry clears old decisions instead of retaining the pinned upstream value; hwp-6pu.5 |
-| Chat reply review routing | Origin capture is implemented; uniquely-waiting-gate chat reply resolution remains missing | U6; hwp-6pu.10 |
+| Chat reply review routing | Implemented for newly origin/session-bound runs: unique gate selection, native admission/control ownership, explicit decisions or free-text picks, transactional replay receipts and attempt/quote/time fences. Windows Discord channel acceptance passed | U6; `gate_reply.py`, frozen interpretation fixtures, native capture-only hook verifier and hwp-6pu.32. Real thread/remote checks remain in the final matrix |
 | Worker-free PR wait | Partial: full GitHub PR URL, open/merged/closed handling, token and timeout work; numeric/contextual PR lookup is absent | `Executor._wait`; U1 and upstream `wait.py`; hwp-6pu.15 |
 | Single-flight, cancel and retry | Implemented with leases and explicit node/full retry; external native work and upstream `resume` default-selection semantics remain partial | `db.py`, `Engine.retry`, `cli.py`; U3; hwp-6pu.4, hwp-6pu.15 |
 | Cron and schedule actions | Functional Python scheduler and SQLite schedules; not native Hermes Cron registration/tagging | `schedules.py`, `runtime.py`, schedule/restart tests; U5; hwp-6pu.14 |
@@ -419,6 +419,80 @@ Windows Python 3.11 and managed Python 3.14 (three optional skips on 3.14), as d
 native capture-only notification checks on both runtimes, real directory-loader
 and HTTP review/loop contracts, lint, eight asset hashes and four loader tests.
 The already-running hosts need a restart to load this final snapshot fix.
+
+The chat-review checkpoint adds a combined origin-capture/reply hook. It matches
+13 reply interpretations extracted from pinned `gate_reply.py`, including
+case-insensitive decisions, trailing notes and free-text scope picks. The native
+hook runs before authorization on current Hermes; the adapter therefore checks
+the native authorization policy, selected/runtime/transport homes and session
+binding before reading reviews. Native approvals, slash confirmations,
+clarifications, update prompts and running sessions retain reply ownership.
+The slash-command adapter also accepts native `session_key` context as the origin
+lookup key (the model tool continues to use `task_id`). The native verifier
+exercises both a tool-started run and the actual slash-command call boundary.
+
+Uniqueness is checked across every waiting gate, including parallel gates in one
+run, then checked again inside the review write transaction. The review event
+holds a hashed incoming-message receipt in the same transaction as settlement;
+concurrent/replayed messages and post-commit process death cannot decide a new
+attempt. Receipt lookup uses the existing event store, with no schema migration.
+The admitted native router and thread metadata are retained through asynchronous
+decision work, so a later capture cannot redirect a confirmation.
+
+Intentional boundaries beyond pinned behavior: chat routing requires a captured
+session binding on the run; older/dashboard/scheduled/headless runs remain manual.
+An older unbound gate in the same chat scope prevents selecting a newer bound
+gate by guess. Edited, synthetic and bot messages are not review input. Event
+timestamps older than the gate are refused, and quoted replies must carry the
+current `[workflow-review:<attempt_id>]` marker from the waiting notice. A platform
+that omits reply text requires a fresh unquoted reply or manual review. An
+ordinary fresh unquoted message has no old-attempt anchor: as upstream specifies,
+its text answers the currently unique gate. Gate option restrictions still apply.
+Confirmations are bounded and best-effort; their failure never replays a decision.
+
+`verify_native_chat_reviews.py` passed on installed Windows Hermes with Python
+3.11 and 3.14, using its actual directory loader, plugin/hook dispatcher, source
+and event classes, native slash-confirmation store and delivery router. The
+authorization policy is an injected deterministic seam. Captured thread notices,
+request-changes re-entry, stale quoted replies, replay, free-text approval,
+separate attempt notes and unload passed in temporary storage; no model workers
+or external messages were involved. Subsequent real account acceptance is
+recorded below under **hwp-6pu.32**.
+The full 179-test suites passed on Windows Python 3.11 and managed Python 3.14
+(three optional-dependency skips on 3.14). Twenty chat-review regressions plus
+the sender-snapshot regression cover the new behavior. The final 3.11 run was
+sequential after a parallel run hit an unrelated isolated-worker startup timeout;
+the affected test also passed alone. Lint, native dashboard review/loop contracts,
+all eight asset hashes and four loader tests passed; frontend bundles are unchanged.
+
+Live Windows chat-review acceptance then passed for
+`chat-review-live-qa-8919449c9f50` in the user-authorized Discord `#hermes` channel.
+The restarted gateway and all three embedded helper hosts were refreshed before
+the user started the worker-free manual fixture through `/workflow run`. Its
+captured origin, session key and guild scope were persisted. Native Discord
+readback verified one initial review notice from the expected bot. An ordinary
+quoted `needs_changes live chat revision check` reply resolved the first attempt
+and opened iteration 1 with a new attempt ID and no inherited decision/note.
+
+Quoting the original notice with `approved stale review check` was refused while
+the new attempt remained waiting and the decision-receipt count stayed at one.
+Quoting the new notice with `scope 3` then approved it, preserving that exact note
+and completing the run. Read-only assertions verified two distinct review
+attempts and receipts, both notes, two successful confirmations, one stale
+refusal and three lifecycle notices, each acknowledged/sent exactly once. Exact
+Discord body/author/destination readback agreed. Native gateway skip logs matched
+all three addressed review messages; none started an ordinary LLM turn and no
+workflow model worker ran. Initial slash-form and unmentioned ordinary inputs
+were left to native command/admission rules, as expected; shared-channel users
+should use Discord Reply with the bot mention enabled.
+
+The web dashboard displayed completion. The fixture was disabled with no pending
+or in-flight notices, preserving messages and history. A later readback verified
+deduplication. Audit, message proof, acceptance assertions and the completed web
+screenshot are under `.cache/dashboard-check/chat-review-live-qa/`. This is a real
+channel result, not real thread or remote-account acceptance; the native verifier
+covers thread routing with capture adapters and the remaining matrix stays in
+**hwp-6pu.16**.
 
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner

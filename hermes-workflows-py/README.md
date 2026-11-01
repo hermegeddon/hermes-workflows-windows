@@ -486,7 +486,7 @@ Public run-request bodies cannot supply or spoof an origin. Human-review,
 completed/failed, blocked-card and stuck-adoption notices have durable identities;
 review loop iterations have separate attempt identities. Review notices currently
 direct the operator to the dashboard or `/workflow review`; automatic chat-reply
-review routing is a separate implementation phase.
+review routing is available for newly chat-started runs as described below.
 
 Native cards subscribe their origin to the host notifier by default. Set
 `notifications: {"subscribe_cards": false}` on the workflow to silence card
@@ -522,6 +522,47 @@ capture adapters, with no model calls or external messages. Restart all workflow
 hosts together (gateway, dashboards and any proxy embedding the plugin) when
 upgrading to schema 3; older backend generations cannot open the new schema.
 Historical runs without notification context do not acquire retrospective sends.
+
+### Review replies in gateway chats
+
+Start a workflow through `workflow_run` or `/workflow run <id>` in the messaging
+chat/thread that should own its reviews. When exactly one gate is waiting there,
+reply with `approved`, `rejected`, or `needs_changes` (case-insensitive), followed
+by an optional note. Other non-empty text is approved and preserved as the full
+note; for example, `scope 3` selects that scope. The gate's allowed options still
+apply. The gateway consumes a successful review reply without starting an LLM
+turn and sends a best-effort confirmation to the same origin/thread.
+
+In a Discord server channel, use **Reply** on the review notice and keep the bot
+mention enabled so native mention filtering admits the message. Send decision
+text as an ordinary message, without a leading slash or `/workflow` prefix.
+`/workflow review ...` remains the separate explicit command form.
+
+The hook checks native sender authorization and the current profile, gateway,
+session and chat scope before acting. Empty input, slash commands, bot/internal
+events, edited messages, and replies owned by an active agent or native approval,
+clarification, command-confirmation or update prompt continue through Hermes.
+Multiple waiting gates (including two in one run) fall through without guessing.
+
+Decisions and hashed incoming-message receipts commit together in the existing
+SQLite event store. Replay after restart or loop re-entry does not decide a newer
+attempt. Messages older than the current gate are refused. Waiting notices carry
+`[workflow-review:<attempt_id>]`; a quoted reply must include the current marker
+in the platform's reply text. An old or unavailable quote is refused with manual
+review instructions. Send a fresh unquoted reply or use the dashboard if the
+platform omits quoted text. A lost confirmation never repeats the decision.
+
+Runs created before session capture was added, or started from the dashboard,
+standalone CLI or a schedule, retain manual review through the dashboard/tool/
+`/workflow review`. No chat origin is inferred from a delivery destination.
+Missing native admission/control APIs also leave manual review available.
+
+[`examples/chat-review-loop.workflow.json`](examples/chat-review-loop.workflow.json)
+is a worker-free fixture for testing `needs_changes` followed by a fresh approval.
+`scripts/verify_native_chat_reviews.py --hermes-source <checkout>` exercises the
+installed directory loader, native hook dispatcher, loop/replay fences, command
+confirmation precedence and thread delivery using capture-only adapters. It uses
+temporary storage and invokes no model workers or external messaging accounts.
 
 The dashboard's current client routes are implemented, but the Python backend
 does not reproduce every upstream integration. Bound project agent tasks use

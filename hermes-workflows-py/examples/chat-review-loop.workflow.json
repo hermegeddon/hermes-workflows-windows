@@ -1,0 +1,20 @@
+{
+  "id": "chat-review-loop-smoke",
+  "name": "Chat review loop smoke test (no model calls)",
+  "version": 1,
+  "scope": {"type": "global"},
+  "trigger": {"type": "manual"},
+  "deliver": "origin",
+  "nodes": [
+    {"id": "start", "type": "prompt", "prompt": "Test chat review decisions without a worker."},
+    {"id": "review", "type": "human_review", "title": "Reply needs_changes, then approve the fresh review", "options": ["approved", "rejected", "needs_changes"]},
+    {"id": "done", "type": "finish", "outcome": "success"},
+    {"id": "rejected", "type": "finish", "outcome": "failure"}
+  ],
+  "edges": [
+    {"from": "start", "to": "review"},
+    {"from": "review", "to": "review", "condition": {"type": "review_status", "equals": "needs_changes"}},
+    {"from": "review", "to": "done", "condition": {"type": "review_status", "equals": "approved"}},
+    {"from": "review", "to": "rejected", "condition": {"type": "review_status", "equals": "rejected"}}
+  ]
+}

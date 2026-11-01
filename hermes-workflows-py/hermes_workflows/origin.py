@@ -6,6 +6,7 @@ import asyncio
 import threading
 from collections import OrderedDict
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 
@@ -75,6 +76,7 @@ class Origins:
                             if getattr(source, k, None)
                         }
                         routing["delivery_metadata"] = metadata
+                        routing["session_key"] = key
                         self._origins[key] = {"origin": origin, "routing": routing}
                         self._origins.move_to_end(key)
                         while len(self._origins) > 2048:
@@ -123,8 +125,14 @@ class NativeSender:
     def available(self):
         return self._binding() is not None
 
+    def snapshot(self):
+        """Bind a confirmation to the router admitted before asynchronous work."""
+        return partial(self._send, self._binding())
+
     async def send(self, target, text, identity, *, metadata=None):
-        binding = self._binding()
+        return await self._send(self._binding(), target, text, identity, metadata=metadata)
+
+    async def _send(self, binding, target, text, identity, *, metadata=None):
         if binding is None:
             return False
         # Keep the router we actually validated, including across a gateway

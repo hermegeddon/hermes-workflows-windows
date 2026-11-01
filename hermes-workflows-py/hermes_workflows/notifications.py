@@ -38,10 +38,25 @@ def notice_text(run, event, node_id=None, deliver=None):
         return result_output(run)
     prefix = f"Workflow {run['workflow_id']} run {run['run_id']}"
     if event == "waiting":
+        context = run.get("notification_context", {})
+        attempt = run.get("nodes", {}).get(node_id, {}).get("attempt_id")
+        chat_hint = ""
+        if (
+            attempt
+            and run.get("origin")
+            and context.get("routing", {}).get("session_key")
+            and resolve_target(run["origin"], context.get("default"), deliver) == run["origin"]
+        ):
+            chat_hint = (
+                " When this is the only waiting gate here, reply with approved, rejected, "
+                "or needs_changes plus an optional note. Other text approves and becomes the note. "
+                f"[workflow-review:{attempt}]"
+            )
         return (
             f"ACTION NEEDED - {prefix}: review gate '{node_id}' is waiting for your decision. "
             "Resolve it in the dashboard or with: "
             f"/workflow review {run['run_id']} {node_id} <approved|rejected|needs_changes> [note]."
+            + chat_hint
         )
     if event == "blocked":
         return f"ATTENTION - {prefix}: the card for node '{node_id}' is blocked. Inspect and unblock it on its board; the run resumes automatically."

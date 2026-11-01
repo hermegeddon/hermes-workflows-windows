@@ -1,0 +1,101 @@
+{
+  "reference": {
+    "commit": "352e5ffb751e4798e66dcdf1dbe9a80dff768c0f",
+    "source_sha256": {
+      "hermes_workflows/gate_reply.py": "527be880aefa7a6d641bca2553134aa2f3438025e264dcb5b8cfdb4b3a5cf4e1"
+    }
+  },
+  "interpretations": [
+    {
+      "text": "",
+      "expected": [
+        null,
+        null
+      ]
+    },
+    {
+      "text": "  ",
+      "expected": [
+        null,
+        null
+      ]
+    },
+    {
+      "text": "approved",
+      "expected": [
+        "approved",
+        null
+      ]
+    },
+    {
+      "text": "Approved ship it",
+      "expected": [
+        "approved",
+        "ship it"
+      ]
+    },
+    {
+      "text": "Rejected fix this",
+      "expected": [
+        "rejected",
+        "fix this"
+      ]
+    },
+    {
+      "text": "NEEDS_CHANGES",
+      "expected": [
+        "needs_changes",
+        null
+      ]
+    },
+    {
+      "text": " needs_changes  fix lints ",
+      "expected": [
+        "needs_changes",
+        "fix lints"
+      ]
+    },
+    {
+      "text": "3",
+      "expected": [
+        "approved",
+        "3"
+      ]
+    },
+    {
+      "text": "scope 3",
+      "expected": [
+        "approved",
+        "scope 3"
+      ]
+    },
+    {
+      "text": "Native Obsidian views",
+      "expected": [
+        "approved",
+        "Native Obsidian views"
+      ]
+    },
+    {
+      "text": "żółć\nsecond line",
+      "expected": [
+        "approved",
+        "żółć\nsecond line"
+      ]
+    },
+    {
+      "text": "yes please",
+      "expected": [
+        "approved",
+        "yes please"
+      ]
+    },
+    {
+      "text": "approved, ship it",
+      "expected": [
+        "approved",
+        "approved, ship it"
+      ]
+    }
+  ]
+}

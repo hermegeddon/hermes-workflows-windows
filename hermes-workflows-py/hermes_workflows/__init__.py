@@ -138,7 +138,12 @@ def _command(raw_args="", *, home=None, **_kwargs):
         if sub == "cancel":
             status, result = API(get_runtime(home)).handle("POST", f"/runs/{args['run_id']}/cancel")
         elif sub in ("list", "run", "status", "review", "explain"):
-            status, result = _tool("workflow_" + sub, args, home, task_id=_kwargs.get("task_id"))
+            status, result = _tool(
+                "workflow_" + sub,
+                args,
+                home,
+                task_id=_kwargs.get("task_id") or _kwargs.get("session_key"),
+            )
         else:
             return usage
         return json.dumps(result, ensure_ascii=False)
@@ -163,7 +168,7 @@ def register(ctx):
         runtime = get_runtime(home)
         register_hook = getattr(ctx, "register_hook", None)
         if callable(register_hook):
-            register_hook("pre_gateway_dispatch", runtime.origins.capture)
+            register_hook("pre_gateway_dispatch", runtime.pre_dispatch)
         on_unload = getattr(ctx, "on_unload", None)
         if callable(on_unload):
             on_unload(own_runtime(runtime))

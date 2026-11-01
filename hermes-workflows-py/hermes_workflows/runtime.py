@@ -17,6 +17,7 @@ from pathlib import Path
 from .db import ConflictError, Database, hermes_home
 from .engine import Engine
 from .executor import Executor
+from .gate_reply import ChatReviews
 from .native import NativeHost
 from .notifications import Notifications
 from .origin import NativeSender, Origins
@@ -40,6 +41,7 @@ class Runtime:
         self.engine.executor.home = self.engine.executor.home or self.home
         self.origins = Origins(NativeHost(self.home))
         self.notifications = Notifications(self.db, self.home, NativeSender(self.origins))
+        self.chat_reviews = ChatReviews(self)
         self.owner = uuid.uuid4().hex
         self.thread: threading.Thread | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -52,6 +54,10 @@ class Runtime:
     @property
     def closed(self):
         return self._closed
+
+    async def pre_dispatch(self, event=None, gateway=None, session_store=None, **kwargs):
+        await self.origins.capture(event, gateway, session_store, **kwargs)
+        return await self.chat_reviews.route(event, gateway, session_store)
 
     def start(self):
         with self._lock:

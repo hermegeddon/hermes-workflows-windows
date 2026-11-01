@@ -165,11 +165,14 @@ class Database:
         attempt: tuple[str, str] | None = None,
         invalidate: bool = False,
         restart_attempts: dict[str, dict] | None = None,
+        guard: Callable | None = None,
     ) -> dict:
         with self.connect(write=True) as con:
             row = self._owned_row(con, run_id, owner, revision, attempt)
             state = json.loads(row["state"])
             before = json.dumps(state)
+            if guard is not None:
+                guard(con, state)
             change(state)
             changed = json.dumps(state) != before or spec is not None
             revoked = invalidate and changed

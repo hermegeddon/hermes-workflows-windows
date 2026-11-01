@@ -421,6 +421,20 @@ class OriginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(gateway.reads, 1)
 
+    async def test_confirmation_snapshot_keeps_the_admitted_router_after_rebinding(self):
+        await self.origins.capture(self.event, self.gateway)
+        send = NativeSender(self.origins).snapshot()
+        foreign_calls = []
+
+        async def foreign(*args, **kwargs):
+            foreign_calls.append(args)
+            return {"local": {"success": True}}
+
+        self.gateway.delivery_router = SimpleNamespace(deliver=foreign)
+        self.assertTrue(await send("local", "original confirmation", "bound-proof"))
+        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(foreign_calls, [])
+
 
 class ContractTests(unittest.TestCase):
     def test_frozen_upstream_reference_decisions(self):
