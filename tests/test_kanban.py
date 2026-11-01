@@ -189,21 +189,39 @@ class KanbanTests(unittest.TestCase):
         self.db = Database(self.root / "workflow/runs.db")
         self.kb = BoardDouble(self.root / "native")
         self.adapter = KanbanExecutor(self.db, self.kb.host(), poll_seconds=0.01)
+        self.runtimes = []
 
     def runtime(self, runner=None):
         runtime = Runtime(self.db, SpecStore([self.root / "global"]), Executor(agent_runner=runner))
         runtime.engine.kanban = self.adapter
+        self.runtimes.append(runtime)
         self.addCleanup(runtime.close)
         return runtime.start()
 
-    def wait(self, predicate):
-        deadline = time.monotonic() + 5
+    def wait(self, predicate, *, timeout=5):
+        started = time.monotonic()
+        deadline = started + timeout
         while time.monotonic() < deadline:
             value = predicate()
             if value:
                 return value
             time.sleep(0.01)
-        self.fail("condition did not settle")
+        runs = [self.db.get_run(row["run_id"]) for row in self.db.list_runs("all")]
+        diagnostics = {
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "runs": runs,
+            "attempts": {run["run_id"]: self.db.attempts(run["run_id"]) for run in runs},
+            "cards": {board: self.kb.cards(board) for board in self.kb.boards},
+            "runtimes": [
+                {
+                    "owner": runtime.owner,
+                    "thread_alive": bool(runtime.thread and runtime.thread.is_alive()),
+                    "startup_error": repr(runtime._startup_error),
+                }
+                for runtime in self.runtimes
+            ],
+        }
+        self.fail("condition did not settle: " + json.dumps(diagnostics, default=str))
 
     def wait_card(self, index=0):
         return self.wait(
@@ -221,7 +239,11 @@ class KanbanTests(unittest.TestCase):
                 if (r := self.db.get_run(run_id))["status"]
                 in ("completed", "failed", "cancelled", "waiting")
                 else None
-            )
+            ),
+            # Hosted Windows can spend seconds in several SQLite transitions
+            # after the fake worker finishes. Keep card-readiness waits short,
+            # but allow terminal acknowledgement within its own fixture budget.
+            timeout=15,
         )
 
     def seeded(self):
