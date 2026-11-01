@@ -156,6 +156,14 @@ class AdoptionExecutor:
                 audit = self.kb.host.module("adoption")._append_event
                 with native.write_txn(conn):
                     self.journal(conn)
+                    from .observer import associate
+
+                    try:
+                        associate(
+                            conn, self.db.path, run_id, node_id, attempt_id, revision, identity
+                        )
+                    except Exception:
+                        pass
                     key = f"{plan['key']}:{identity}:{stage}"
                     saved = conn.execute(
                         "SELECT receipt FROM hermes_workflows_adoptions WHERE action_key=?", (key,)

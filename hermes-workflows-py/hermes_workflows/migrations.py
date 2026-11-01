@@ -6,7 +6,7 @@ import json
 import time
 import uuid
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 V1 = """
 CREATE TABLE py_runs (
@@ -60,6 +60,28 @@ CREATE TABLE py_notifications (
 CREATE INDEX py_notifications_pending ON py_notifications(status,created_at);
 """
 
+V4 = """
+CREATE TABLE py_workers (
+    worker_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES py_runs(run_id),
+    node_id TEXT NOT NULL, attempt_id TEXT NOT NULL REFERENCES py_attempts(attempt_id),
+    revision INTEGER NOT NULL, stream_key TEXT NOT NULL, active INTEGER NOT NULL,
+    context TEXT NOT NULL, data TEXT NOT NULL, sequence INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL, updated_at REAL NOT NULL
+);
+CREATE UNIQUE INDEX py_workers_active ON py_workers(attempt_id,stream_key) WHERE active=1;
+CREATE TABLE py_worker_approvals (
+    request_id TEXT PRIMARY KEY, worker_id TEXT NOT NULL REFERENCES py_workers(worker_id),
+    token TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL, choice TEXT,
+    expires_at REAL NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL
+);
+CREATE INDEX py_worker_approvals_pending ON py_worker_approvals(worker_id,status);
+CREATE TABLE py_traces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES py_runs(run_id),
+    event TEXT NOT NULL
+);
+CREATE INDEX py_traces_run ON py_traces(run_id,id);
+"""
+
 
 def statements(con, sql):
     # executescript() implicitly commits, which would break migration rollback.
@@ -111,3 +133,7 @@ def migrate(con):
     if version == 2:
         statements(con, V3)
         con.execute("UPDATE py_metadata SET version=3")
+        version = 3
+    if version == 3:
+        statements(con, V4)
+        con.execute("UPDATE py_metadata SET version=4")

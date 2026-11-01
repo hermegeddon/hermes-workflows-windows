@@ -164,7 +164,13 @@ def register(ctx):
     home = hermes_home()
     # Agent workers load Hermes plugins too. They must not recursively start
     # another workflow supervisor while performing one node of a parent run.
-    if os.environ.get("HERMES_WORKFLOWS_WORKER") != "1":
+    if os.environ.get("HERMES_KANBAN_TASK") and os.environ.get("HERMES_WORKFLOWS_WORKER") != "1":
+        from .observer import register_worker_observers
+
+        register_worker_observers(ctx)
+    if os.environ.get("HERMES_WORKFLOWS_WORKER") != "1" and not os.environ.get(
+        "HERMES_KANBAN_TASK"
+    ):
         runtime = get_runtime(home)
         register_hook = getattr(ctx, "register_hook", None)
         if callable(register_hook):

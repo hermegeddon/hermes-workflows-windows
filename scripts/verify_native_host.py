@@ -145,6 +145,18 @@ def host_contract(plugin: Path) -> dict:
                         await client.get(base + "/runs/" + run_id + "/export")
                     ).status_code == 200
                     assert (await client.get(base + "/settings")).status_code == 200
+                    response = await client.get(base + "/runs/" + run_id + "/attempts")
+                    assert response.status_code == 200 and response.json()["attempts"], (
+                        response.text
+                    )
+                    response = await client.post(
+                        base + "/runs/" + run_id + "/approvals/absent-request",
+                        json={"node_id": "gate", "attempt_id": "absent-attempt", "choice": "once"},
+                    )
+                    assert (
+                        response.status_code == 404
+                        and response.json()["detail"] == "command approval not found"
+                    ), response.text
 
                     loop = {
                         "id": "native-loop",
@@ -235,6 +247,7 @@ def host_contract(plugin: Path) -> dict:
                 "native_dashboard_mount": "passed",
                 "dashboard_run_review": "passed",
                 "dashboard_loop_review": "passed",
+                "dashboard_worker_observation_routes": "passed",
             }
         finally:
             if manager is not None:

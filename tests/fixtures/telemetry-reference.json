@@ -1,0 +1,191 @@
+{
+  "upstream_commit": "352e5ffb751e4798e66dcdf1dbe9a80dff768c0f",
+  "source_sha256": {
+    "telemetry.py": "33092259b021d91c5ebe1fb2e7c43d731424784719194abe1b23f90da45ee295",
+    "engine.py": "dd43f4b675e4945e3b5de797b247ba03d93687f5daab2eaae943f3487dcd9c76"
+  },
+  "events": [
+    [
+      "api",
+      10,
+      {
+        "usage": {
+          "prompt_tokens": 7,
+          "completion_tokens": 2
+        }
+      }
+    ],
+    [
+      "api",
+      11,
+      {
+        "usage": {
+          "input_tokens": 3,
+          "output_tokens": 1
+        }
+      }
+    ],
+    [
+      "api_error",
+      12,
+      {
+        "error": {
+          "type": "Timeout",
+          "message": "retry later"
+        }
+      }
+    ],
+    [
+      "tool",
+      13,
+      {
+        "status": "success"
+      }
+    ],
+    [
+      "tool",
+      14,
+      {
+        "status": "error",
+        "error_type": "Missing",
+        "error_message": "gone"
+      }
+    ],
+    [
+      "subagent",
+      15,
+      {}
+    ],
+    [
+      "approval_request",
+      20,
+      {
+        "command": "fixture command",
+        "description": "confirm",
+        "surface": "cli"
+      }
+    ],
+    [
+      "approval_response",
+      25,
+      {
+        "choice": "deny"
+      }
+    ]
+  ],
+  "snapshots": [
+    {
+      "api_calls": 1,
+      "input_tokens": 7,
+      "output_tokens": 2,
+      "total_tokens": 9,
+      "duration_ms": 0
+    },
+    {
+      "api_calls": 2,
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "duration_ms": 1000
+    },
+    {
+      "api_calls": 3,
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "duration_ms": 2000,
+      "error_type": "Timeout",
+      "error_message": "retry later"
+    },
+    {
+      "api_calls": 3,
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "duration_ms": 3000,
+      "error_type": "Timeout",
+      "error_message": "retry later",
+      "tool_calls": 1
+    },
+    {
+      "api_calls": 3,
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "duration_ms": 4000,
+      "error_type": "Missing",
+      "error_message": "gone",
+      "tool_calls": 2,
+      "tool_errors": 1
+    },
+    {
+      "api_calls": 3,
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "duration_ms": 5000,
+      "error_type": "Missing",
+      "error_message": "gone",
+      "tool_calls": 2,
+      "tool_errors": 1,
+      "subagents": 1
+    },
+    {
+      "api_calls": 3,
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "duration_ms": 5000,
+      "error_type": "Missing",
+      "error_message": "gone",
+      "tool_calls": 2,
+      "tool_errors": 1,
+      "subagents": 1,
+      "approval": {
+        "state": "pending",
+        "requested_at": 20,
+        "command": "fixture command",
+        "description": "confirm",
+        "surface": "cli"
+      }
+    },
+    {
+      "api_calls": 3,
+      "input_tokens": 10,
+      "output_tokens": 3,
+      "total_tokens": 13,
+      "duration_ms": 5000,
+      "error_type": "Missing",
+      "error_message": "gone",
+      "tool_calls": 2,
+      "tool_errors": 1,
+      "subagents": 1,
+      "approval": {
+        "state": "resolved",
+        "requested_at": 20,
+        "command": "fixture command",
+        "description": "confirm",
+        "surface": "cli",
+        "resolved_at": 25,
+        "choice": "deny"
+      }
+    }
+  ],
+  "trace": [
+    {
+      "kind": "node_settled",
+      "node_id": "work",
+      "outcome": "success",
+      "seq": 1
+    },
+    {
+      "kind": "run_status",
+      "from": "running",
+      "to": "completed"
+    },
+    {
+      "kind": "marker",
+      "marker": "completed"
+    }
+  ]
+}

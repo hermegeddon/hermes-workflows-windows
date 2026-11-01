@@ -102,6 +102,7 @@ class Engine:
             "finished_at": None,
             "nodes": {n["id"]: _initial_node(n) for n in workflow["nodes"]},
             "params": fill_params(workflow, params if params is not None else {}),
+            "observability": {"trace_enabled": config["trace_enabled"]},
             "notification_context": {
                 "home": str(self.executor.home or self.db.path.parent.parent),
                 "default": config["default_deliver"]
@@ -630,6 +631,15 @@ class Engine:
                                 timeout=timeout,
                             )
                         else:
+                            if node["type"] == "agent_task":
+                                node["_telemetry_context"] = {
+                                    "db": str(self.db.path.resolve()),
+                                    "run_id": run_id,
+                                    "node_id": raw["id"],
+                                    "attempt_id": attempt_id,
+                                    "revision": revision,
+                                    "stream_key": "direct",
+                                }
                             result = await self.executor.execute(node, run, config)
                 except AdoptionError:
                     raise

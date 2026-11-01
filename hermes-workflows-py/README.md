@@ -564,6 +564,70 @@ installed directory loader, native hook dispatcher, loop/replay fences, command
 confirmation precedence and thread delivery using capture-only adapters. It uses
 temporary storage and invokes no model workers or external messaging accounts.
 
+### Live telemetry, command approvals and traces
+
+The run inspector overlays worker observations while an agent node is active:
+token usage, provider attempts, tool calls/errors, completed subagents and the
+most recent structured error. At settlement, cancellation or retry, observations
+are saved with that execution attempt. Native card retries replace their card's
+current stream; adopted cards contribute separate streams. Existing cards whose
+workers started before adoption cannot acquire hooks retroactively. Their final
+native result remains available, and subsequent workers can publish live data.
+The plugin must be installed/enabled in the native worker's assigned profile.
+
+Direct workers install observers from this package even when the selected agent
+profile has no plugin installation. Optional observation failures leave execution
+running. Workers cannot overwrite an obsolete workflow revision, node attempt,
+native claim or replacement worker. After normal native completion/review, the
+same bound worker may publish its final observations until the workflow attempt
+settles; new registrations and approval decisions still require a live claim.
+Settled inspector/export data uses the saved attempt snapshot. The activity
+duration follows the pinned observer's first-to-last event window; it is not a
+wall-clock execution timer.
+
+`worker_approvals_enabled` defaults to `false`. Enable it in this plugin's Settings
+to let direct workers present native command prompts in the inspector. Supported
+prompts offer **Allow once** and **Deny command**; every decision is bound to the
+displayed run, node attempt and request. Timeout, cancellation, a superseding
+worker or unavailable approval storage denies the request. There are no session
+or permanent approval buttons. With the setting disabled, Hermes' normal policy
+continues to apply.
+
+Native workers keep Hermes' finite-job/headless policy. The plugin does not turn
+a native denial into an interactive wait. Other native prompts remain read-only
+unless Hermes actually requests an approval and the operator explicitly selects
+`security.approval.transport: workflow-dashboard` in that worker profile. The
+transport uses Hermes' immutable request/digest contract. An adopted card observed
+by multiple active workflows refuses dashboard control rather than choosing an
+owner. No host configuration is changed automatically.
+
+`trace_enabled` is captured when a run starts. Enabled runs export redacted JSONL
+with the pinned `ts`, `run_id`, `kind`, `node_id` and lifecycle/marker fields, plus
+attempt/revision identity and worker/approval observations. SQLite stores the
+canonical trace rows so embedded dashboard, gateway and worker processes share
+one timeline. Export materializes `<run>.trace.jsonl`; there is no separate live
+trace file. Captured output, errors, approval text and telemetry are redacted
+before persistence; exported snapshots are recursively redacted and include
+attempt history. Redaction covers common credential forms and secret-named fields,
+not every possible secret in arbitrary prose.
+
+New routes are `POST /runs/{id}/approvals/{request_id}` with
+`{"node_id":"work","attempt_id":"...","choice":"once"}` (or `deny`), and
+`GET /runs/{id}/attempts`. Worker command approvals are separate from workflow
+human-review gates. The same controls are bundled for web and Desktop.
+
+This upgrade uses additive **schema 4**. Restart all workflow hosts together
+(gateway and any dashboard/proxy process embedding the backend), then reload
+Desktop/the dashboard to load the rebuilt client. Older backend versions reject
+the newer schema; use a database backup if rolling back the whole installation.
+
+`scripts/verify_native_telemetry.py --hermes-source <checkout>` checks installed
+worker hooks, direct callbacks, native request binding, claim/process/profile
+boundaries and unchanged headless policy in temporary storage. It invokes no
+provider, shell command or external message. Pinned reference captures live in
+`tests/fixtures/telemetry-reference.json` and can be regenerated with
+`scripts/capture_telemetry_reference.py` against the pinned `.upstream` checkout.
+
 The dashboard's current client routes are implemented, but the Python backend
 does not reproduce every upstream integration. Bound project agent tasks use
 native Kanban; global and explicitly off-board tasks execute directly. Adoption

@@ -14,12 +14,12 @@ import type {
 import type { WorkflowNode, NodeType, ReviewOption } from "@hermes-workflows/core/schema/nodes.ts";
 import type { ParamValue } from "@hermes-workflows/core/templates/params.ts";
 import type {
-  RunState,
+  RunState as CoreRunState,
   RunStatus,
-  NodeRunState,
+  NodeRunState as CoreNodeRunState,
   NodeStatus,
-  NodeTelemetry,
-  NodeTelemetryApproval,
+  NodeTelemetry as CoreNodeTelemetry,
+  NodeTelemetryApproval as CoreNodeTelemetryApproval,
 } from "@hermes-workflows/core/schema/run.ts";
 import type { UiLayout } from "@hermes-workflows/core/schema/ui.ts";
 import type {
@@ -27,6 +27,21 @@ import type {
   ValidationIssue,
 } from "@hermes-workflows/core/validation/validateWorkflow.ts";
 import type { HermesPlan } from "@hermes-workflows/core/compiler/compileToHermesPlan.ts";
+
+type NodeTelemetryApproval = CoreNodeTelemetryApproval & {
+  request_id?: string;
+  can_respond?: boolean;
+  choices?: ("once" | "deny")[];
+};
+type NodeTelemetry = Omit<CoreNodeTelemetry, "approval"> & {
+  approval?: NodeTelemetryApproval;
+  approvals?: NodeTelemetryApproval[];
+};
+type NodeRunState = Omit<CoreNodeRunState, "telemetry"> & {
+  attempt_id?: string;
+  telemetry?: NodeTelemetry;
+};
+type RunState = Omit<CoreRunState, "nodes"> & { nodes: Record<string, NodeRunState> };
 
 export type {
   Workflow,

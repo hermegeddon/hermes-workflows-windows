@@ -43,6 +43,12 @@ SCHEMA = {
             "label": "Observability",
             "fields": [
                 {"key": "trace_enabled", "type": "bool", "default": False, "enforced": True},
+                {
+                    "key": "worker_approvals_enabled",
+                    "type": "bool",
+                    "default": False,
+                    "enforced": True,
+                },
             ],
         },
     ],

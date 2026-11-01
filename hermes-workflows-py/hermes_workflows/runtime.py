@@ -23,6 +23,7 @@ from .notifications import Notifications
 from .origin import NativeSender, Origins
 from .schedules import Cron, iso_now
 from .specs import SpecStore
+from .telemetry import TelemetryStore
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class Runtime:
         self.origins = Origins(NativeHost(self.home))
         self.notifications = Notifications(self.db, self.home, NativeSender(self.origins))
         self.chat_reviews = ChatReviews(self)
+        self.telemetry = TelemetryStore(self.db.path)
         self.owner = uuid.uuid4().hex
         self.thread: threading.Thread | None = None
         self.loop: asyncio.AbstractEventLoop | None = None

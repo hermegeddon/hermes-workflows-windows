@@ -7,14 +7,17 @@ import hashlib
 import json
 import re
 import shutil
+import sqlite3
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import settings
 from .db import ConflictError, hermes_home
+from .redact import redact
 from .runtime import Runtime, get_runtime
 from .schedules import Cron, iso_now
 from .specs import compile_preview, validate
+from .trace import read_trace
 
 BASE = "/api/plugins/hermes-workflows"
 MAX_BODY = 4 * 1024 * 1024
@@ -32,12 +35,14 @@ ROUTES = [
     ("POST", "/workflows/{workflow_id}/run"),
     ("GET", "/runs"),
     ("GET", "/runs/{run_id}"),
+    ("GET", "/runs/{run_id}/attempts"),
     ("GET", "/runs/{run_id}/notifications"),
     ("POST", "/runs/{run_id}/notifications/{notice_id}/reconcile"),
     ("GET", "/runs/{run_id}/export"),
     ("POST", "/runs/{run_id}/review"),
     ("POST", "/runs/{run_id}/cancel"),
     ("POST", "/runs/{run_id}/retry"),
+    ("POST", "/runs/{run_id}/approvals/{request_id}"),
     ("GET", "/schedules"),
     ("PUT", "/schedules/{job_id}"),
     ("DELETE", "/schedules/{job_id}"),
@@ -78,6 +83,8 @@ class API:
             return 409, {"detail": str(exc)}
         except (ValueError, TypeError) as exc:
             return 400, {"detail": str(exc)}
+        except sqlite3.Error:
+            return 503, {"detail": "workflow storage is temporarily unavailable"}
 
     def dispatch(self, method: str, target: str, payload: object):
         if not isinstance(payload, dict):
@@ -255,9 +262,18 @@ class API:
                 raise KeyError("notification not found for this run")
             runtime.notifications.reconcile(bits[3], delivered=payload.get("delivered"))
             return {"notice_id": bits[3], "status": "sent" if payload["delivered"] else "failed"}
+        if len(bits) == 4 and bits[0] == "runs" and bits[2] == "approvals" and method == "POST":
+            for key in ("node_id", "attempt_id", "choice"):
+                if not isinstance(payload.get(key), str) or not payload[key]:
+                    raise ValueError(f"{key} is required")
+            return runtime.telemetry.decide(
+                bits[1], bits[3], payload["node_id"], payload["attempt_id"], payload["choice"]
+            )
         if bits and bits[0] == "runs" and len(bits) in (2, 3):
             run_id, action = bits[1], bits[2] if len(bits) == 3 else ""
             state = db.get_run(run_id)
+            if action == "attempts" and method == "GET":
+                return {"attempts": redact(db.attempts(run_id))}
             if action == "notifications" and method == "GET":
                 return {"notifications": runtime.notifications.records(run_id)}
             if not action and method == "GET":
@@ -268,11 +284,17 @@ class API:
                         state["nodes"][node["id"]]["review_options"] = node.get(
                             "options", ["approved", "rejected", "needs_changes"]
                         )
-                return state
+                return runtime.telemetry.overlay(state)
             if action == "export" and method == "GET":
-                result = {"run_id": run_id, "filename": run_id + ".run.json", "json": state}
-                if settings.values(db)["trace_enabled"]:
-                    result.update(trace=db.trace(run_id), trace_filename=run_id + ".trace.jsonl")
+                result = {
+                    "run_id": run_id,
+                    "filename": run_id + ".run.json",
+                    "json": redact(runtime.telemetry.overlay(state)),
+                }
+                result["json"]["attempts"] = redact(db.attempts(run_id))
+                trace = read_trace(db, run_id)
+                if trace is not None:
+                    result.update(trace=trace, trace_filename=run_id + ".trace.jsonl")
                 return result
             if action == "cancel" and method == "POST":
                 return engine.cancel(run_id)

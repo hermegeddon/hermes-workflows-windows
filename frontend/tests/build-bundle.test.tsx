@@ -1,14 +1,15 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { execSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { dirname, resolve, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import * as hostReact from "react";
 import { render } from "@testing-library/react";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appRoot = resolve(here, "..");
-const distDir = resolve(appRoot, "../hermes-workflows-py/dashboard/compat");
+const distDir = mkdtempSync(join(tmpdir(), "hermes-workflow-bundle-"));
 const distFile = resolve(distDir, "index.js");
 
 // The T0 acceptance criterion: the editor source builds to a single
@@ -19,9 +20,10 @@ describe("T0 bundling spike â€” built plugin bundle", () => {
   let bundleSource = "";
 
   beforeAll(() => {
-    execSync("vite build", { cwd: appRoot, stdio: "inherit" });
+    execFileSync(process.execPath, [resolve(appRoot, "node_modules/vite/bin/vite.js"), "build", "--outDir", distDir, "--emptyOutDir"], { cwd: appRoot, stdio: "inherit" });
     bundleSource = readFileSync(distFile, "utf8");
   }, 180_000);
+  afterAll(() => rmSync(distDir, { recursive: true, force: true }));
 
   it("emits a single self-executing file with no dynamic chunks", () => {
     expect(existsSync(distFile)).toBe(true);

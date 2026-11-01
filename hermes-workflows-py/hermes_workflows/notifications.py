@@ -209,9 +209,32 @@ class Notifications:
 
     def _settle(self, identity, owner, status, error):
         with self.db.connect(write=True) as con:
-            con.execute(
+            changed = con.execute(
                 "UPDATE py_notifications SET status=?,error=?,updated_at=? WHERE notice_id=? AND owner=? AND status='in_flight'",
                 (status, error, time.time(), identity, owner),
+            ).rowcount
+            if changed:
+                self._trace_delivery(con, identity, status)
+
+    @staticmethod
+    def _trace_delivery(con, identity, status):
+        from .trace import safe_emit
+
+        row = con.execute(
+            "SELECT r.state,n.payload,n.revision FROM py_notifications n JOIN py_runs r USING(run_id) WHERE n.notice_id=?",
+            (identity,),
+        ).fetchone()
+        if row:
+            payload = json.loads(row["payload"])
+            safe_emit(
+                con,
+                json.loads(row["state"]),
+                "marker" if status == "sent" else "notification_status",
+                marker=payload["event"],
+                node_id=payload.get("node_id"),
+                notice_id=identity,
+                notice_revision=row["revision"],
+                status=status,
             )
 
     def reconcile(self, identity, *, delivered):
@@ -225,3 +248,4 @@ class Notifications:
             ).rowcount
             if changed != 1:
                 raise ValueError("only an unknown notification can be reconciled")
+            self._trace_delivery(con, identity, "sent" if delivered else "failed")

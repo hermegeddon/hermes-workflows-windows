@@ -288,6 +288,10 @@ class Executor:
                             "response": str(response),
                             "progress": str(progress),
                             "preflight": node.get("_preflight", False),
+                            "telemetry": node.get("_telemetry_context"),
+                            "worker_approvals_enabled": settings.get(
+                                "worker_approvals_enabled", False
+                            ),
                         },
                         ensure_ascii=False,
                     ),

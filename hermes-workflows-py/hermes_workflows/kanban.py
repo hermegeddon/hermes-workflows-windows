@@ -298,6 +298,14 @@ class KanbanExecutor:
                         )
                 # Native create_task uses a nested savepoint. Only this outer
                 # commit publishes the card AND workflow metadata to dispatch.
+                from .observer import associate
+
+                try:
+                    associate(
+                        conn, self.db.path, run["run_id"], node["id"], attempt_id, revision, task_id
+                    )
+                except Exception:
+                    pass  # An optional observer cannot prevent native work.
         if workspace:
             # The blocked card commits before filesystem changes, preserving a
             # stable task/path identity across process death during Git setup.

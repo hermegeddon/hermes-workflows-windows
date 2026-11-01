@@ -202,8 +202,11 @@ export function RunInspector({
           {selected.error !== undefined && <p className="hw-error">{selected.error}</p>}
           {selected.telemetry !== undefined && (
             <TelemetryDetail
+              key={`${runId}:${selected.attempt_id ?? "legacy"}`}
               telemetry={selected.telemetry}
-              nodeActive={selected.status === "scheduled" || selected.status === "running"}
+              nodeActive={run.run_id === runId && !isTerminalRun(run.status) && (selected.status === "scheduled" || selected.status === "running")}
+              onDecision={selected.attempt_id === undefined ? undefined : (requestId, choice) =>
+                api.decideCommand(runId, selectedNodeId, selected.attempt_id!, requestId, choice)}
             />
           )}
         </Modal>

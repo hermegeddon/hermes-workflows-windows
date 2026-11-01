@@ -93,6 +93,20 @@ class NotificationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.sender.calls), 2)
         self.assertTrue(all(n["status"] == "sent" for n in self.notices.records(run["run_id"])))
 
+    async def test_acknowledged_delivery_adds_one_redacted_trace_marker(self):
+        from hermes_workflows.settings import save
+        from hermes_workflows.trace import read_trace
+
+        save(self.db, {"trace_enabled": True})
+        run, _ = await self.waiting()
+        await self.notices.dispatch()
+        await self.notices.dispatch()
+        lines = [json.loads(line) for line in read_trace(self.db, run["run_id"]).splitlines()]
+        markers = [line for line in lines if line["kind"] == "marker"]
+        self.assertEqual(len(markers), 1)
+        self.assertEqual(markers[0]["marker"], "waiting")
+        self.assertNotIn("text", markers[0])
+
     async def test_headless_notice_survives_restart_and_resolved_gate_is_superseded(self):
         self.sender.ready = False
         run, _ = await self.waiting()

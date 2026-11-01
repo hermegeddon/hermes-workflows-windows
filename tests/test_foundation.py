@@ -22,7 +22,7 @@ from hermes_workflows.db import ConflictError, Database, _enable_wal
 from hermes_workflows.effects import EffectStore
 from hermes_workflows.engine import Engine
 from hermes_workflows.executor import Executor, Result
-from hermes_workflows.migrations import V1, statements
+from hermes_workflows.migrations import SCHEMA_VERSION, V1, statements
 from hermes_workflows.native import NativeHost, NativeUnavailable
 from hermes_workflows.runtime import Runtime
 from hermes_workflows.specs import SpecStore
@@ -97,7 +97,7 @@ class StorageTests(unittest.TestCase):
         self.assertIn('"type": "original"', db.trace("legacy"))
         self.assertEqual(db.attempts("legacy")[0]["data"], state["nodes"]["done"])
         with db.connect() as con:
-            self.assertEqual(con.execute("SELECT version FROM py_metadata").fetchone()[0], 3)
+            self.assertEqual(con.execute("SELECT version FROM py_metadata").fetchone()[0], SCHEMA_VERSION)
         Database(self.path)
         self.assertEqual(len(db.attempts("legacy")), 1)
 

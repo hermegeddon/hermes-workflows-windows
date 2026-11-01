@@ -1,6 +1,9 @@
 import type { NodeTelemetry, NodeTelemetryApproval } from "../api/types";
+import { useState } from "react";
+import { Button } from "../ui/components";
+import { errorMessage } from "./useRunPolling";
 
-// Read-only telemetry block for the run inspector's node detail: the
+// Telemetry block for the run inspector's node detail: the
 // observer-derived aggregates the worker recorded (duration, tokens, API and
 // tool calls, subagents, structured error), plus the command-approval state —
 // "waiting" while the node's worker is blocked on a human answer, and the
@@ -13,6 +16,7 @@ export interface TelemetryDetailProps {
    *  is announced only then — on a settled node it just means the worker died
    *  mid-prompt. */
   nodeActive?: boolean;
+  onDecision?: (requestId: string, choice: "once" | "deny") => Promise<unknown>;
 }
 
 function formatDurationMs(ms: number): string {
@@ -39,26 +43,48 @@ function formatToolCalls(t: NodeTelemetry): string {
 function ApprovalNote({
   approval,
   nodeActive,
+  onDecision,
 }: {
   approval: NodeTelemetryApproval;
   nodeActive: boolean;
+  onDecision?: TelemetryDetailProps["onDecision"];
 }): React.ReactElement | null {
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const controlled = approval.can_respond === true && approval.request_id !== undefined && onDecision !== undefined;
+  const decide = async (choice: "once" | "deny") => {
+    if (!controlled || busy || sent) return;
+    setBusy(true); setError(null);
+    try {
+      await onDecision(approval.request_id!, choice);
+      setSent(true);
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setBusy(false); }
+  };
   if (approval.state === "pending" && nodeActive) {
     return (
       <div className="hw-approval">
         <p className="hw-approval__pending">
-          Waiting for command approval — answer it on the worker's chat/CLI surface.
+          {sent ? "Decision sent. Waiting for the worker." : controlled
+            ? "Waiting for command approval."
+            : "Waiting for command approval — answer it on the worker's chat/CLI surface."}
         </p>
         {approval.command !== undefined && <pre className="hw-output">{approval.command}</pre>}
         {approval.description !== undefined && <p className="hw-note">{approval.description}</p>}
+        {controlled && <div className="hw-actions">
+          {(approval.choices ?? []).includes("once") && <Button disabled={busy || sent} onClick={() => void decide("once")}>Allow once</Button>}
+          {(approval.choices ?? []).includes("deny") && <Button disabled={busy || sent} onClick={() => void decide("deny")}>Deny command</Button>}
+        </div>}
+        {error !== null && <p className="hw-error" role="alert">{error}</p>}
       </div>
     );
   }
-  if (approval.state === "resolved" && (approval.choice === "deny" || approval.choice === "timeout")) {
+  if (approval.state === "resolved" && ["deny", "timeout", "cancelled"].includes(approval.choice ?? "")) {
     return (
       <div className="hw-approval">
         <p className="hw-error">
-          {approval.choice === "deny" ? "Command approval denied" : "Command approval timed out"}
+          {approval.choice === "deny" ? "Command approval denied" : approval.choice === "timeout" ? "Command approval timed out" : "Command approval cancelled"}
         </p>
         {approval.command !== undefined && <pre className="hw-output">{approval.command}</pre>}
       </div>
@@ -70,6 +96,7 @@ function ApprovalNote({
 export function TelemetryDetail({
   telemetry: t,
   nodeActive = false,
+  onDecision,
 }: TelemetryDetailProps): React.ReactElement {
   const rows: [string, string][] = [];
   if (t.duration_ms !== undefined) rows.push(["Duration", formatDurationMs(t.duration_ms)]);
@@ -92,7 +119,9 @@ export function TelemetryDetail({
           {t.error_message !== undefined ? `${t.error_type}: ${t.error_message}` : t.error_type}
         </p>
       )}
-      {t.approval !== undefined && <ApprovalNote approval={t.approval} nodeActive={nodeActive} />}
+      {(t.approvals ?? (t.approval ? [t.approval] : [])).map((approval, index) => (
+        <ApprovalNote key={approval.request_id ?? `${approval.requested_at}:${index}`} approval={approval} nodeActive={nodeActive} onDecision={onDecision} />
+      ))}
     </div>
   );
 }

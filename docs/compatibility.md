@@ -59,8 +59,8 @@ Local implementation evidence is in
 | Kanban lifecycle advance | Python supervisor polls owned cards and native final run summaries, resumes the same attempt on restart, and reconciles terminal/superseded card cleanup. Blocked cards wait up to the persisted node deadline; lifecycle hooks are not required for progress | U5; `KanbanExecutor`, native/isolated tests; hwp-6pu.6. No POSIX detached commands |
 | Result delivery and lifecycle notices | Native router adapter, scoped origin/default/explicit targets, result `[SILENT]`, idempotent native card subscriptions and node overrides implemented. Transactional schema-3 outbox distinguishes acknowledged, headless and ambiguous sends. Cross-profile routers are refused; Windows local-file and explicit Discord-channel delivery passed live acceptance | U6; `notifications.py`, `origin.py`, pinned reference fixtures and native capture-only verifier; hwp-6pu.9 |
 | OpenSecondBrain | Partial presence/config badge only; no actual status probe, write policy, event writes or retrospectives | `api.py` `/o2b-status`; U7; hwp-6pu.11 |
-| Telemetry and dangerous-command approvals | Partial final token/duration aggregates and worker-stage diagnostics; native live observers and approval-request UI integration are absent | `agent_worker.py`, `executor.py`; U8; hwp-6pu.12 |
-| Traces and log export | Partial SQLite lifecycle events included on export when enabled; not upstream redacted JSONL event/marker/attempt coverage | `api.py`, `db.py`; U8; hwp-6pu.12 |
+| Telemetry and dangerous-command approvals | Live direct/native worker hooks, per-card stream replacement, adopted-card aggregation and persisted attempt snapshots implemented. Direct dashboard prompts require opt-in; native finite-job policies remain host-owned and prompts without an explicitly selected supported transport remain read-only | `telemetry.py`, `observer.py`, worker callbacks, API and web/Desktop controls; pinned reference, cross-process and installed-native capture tests. Windows web/Desktop decisions and final native completion counters passed; U8; hwp-6pu.12 |
+| Traces and log export | Redacted JSONL lifecycle, notification marker, worker and approval events with attempt/revision extensions implemented; canonical rows are transactional SQLite rather than separate worker trace files. Exports include attempt history | Schema 4, `trace.py`, `redact.py`, `test_telemetry.py`, reference fixtures and delivery trace tests; live redaction, history equality, cancellation and stale-decision rejection passed; U8; hwp-6pu.12 |
 | Portable template export | Partial cached snapshot plus generic adaptation guide; structured de-binding, placeholder inventory and composite provenance/model cache are missing | `api.py` export-template; U9; hwp-6pu.13 |
 | Settings | Implemented subset in SQLite; upstream config/env/default precedence and Kanban/memory/tick settings are missing | `settings.py`; U10; hwp-6pu.14 |
 | Compile preview, API and command compatibility | Dashboard routes are implemented; plan content includes board routing and adoption fields. Upstream CLI/tool verbs such as `resume` differ | `specs.compile_preview`, `api.py`, `cli.py`, `__init__.py`; U10; hwp-6pu.5/.6/.7/.13/.14/.15 |
@@ -493,6 +493,45 @@ screenshot are under `.cache/dashboard-check/chat-review-live-qa/`. This is a re
 channel result, not real thread or remote-account acceptance; the native verifier
 covers thread routing with capture adapters and the remaining matrix stays in
 **hwp-6pu.16**.
+
+Windows telemetry acceptance used a disposable `workflow-qa` profile and a
+loopback scripted provider through real Hermes workers. Web **Allow once** and
+native Desktop **Deny command** resolved their owning requests; timeout,
+cancellation, stale-attempt rejection and synthetic tool errors were verified.
+The error and approval fixtures included synthetic credentials, which were
+redacted in worker storage, inspector snapshots and JSONL/JSON exports. No shell
+commands, paid provider calls or external messages were used. Native board
+execution retained its headless denial policy.
+
+Live checks found two settlement boundaries: terminal inspector reads must use
+the saved attempt snapshot, and the final native completion hook follows claim
+release. The first fix passed a fresh cancellation run with identical inspector,
+export and history data. The second permits observation writes only for the last
+normally completed/reviewed native run, matching claim identity and bound PID,
+while its workflow attempt remains active. Registration and approval decisions
+still require an active claim. Installed-native capture verification passed real
+completion plus archived/superseded rejection and denial after completion. The
+live board-counter rerun completed as `telemetry-live-v2-board-eca7acb545c0`:
+one current stream, three API/tool calls, 6,630 tokens, and identical saved worker,
+inspector/export and attempt-history counters. The scripted provider repeated
+completion after success, correctly recording one tool error. A prior run never
+reached the observer because the native launcher attempted a source dependency
+update and missed its managed-worker hello deadline; that disposable run was
+cancelled before the successful retry.
+Evidence is in `.cache/dashboard-check/telemetry-live-qa/` and
+`.cache/dashboard-check/telemetry-live-v2/`.
+Both fixtures were disabled after testing; configuration/environment bytes and
+the two changed settings were restored, temporary tools were removed, and the
+idle QA profile was reloaded. Desktop returned to local/default. All 196 tests
+passed on Python 3.11 and managed 3.14 after the snapshot fix (three optional
+dependency skips on 3.14). Following the native completion fix, the targeted
+telemetry suites and installed-native verifier passed. A full 3.11 repeat hit
+one existing eight-second worker-startup wait; that test passed alone in 0.84s
+and all 26 workflow tests passed afterward. This and the earlier adoption timing
+failure remain tracked in **hwp-6pu.34** for release validation. The 347 frontend
+tests, typecheck, both bundles, four loader tests, Ruff and asset hashes passed.
+The final pre-commit Python 3.11 repeat passed all 196 tests in 157s, with normal
+command startup timings; the intermittent readiness issue remains a release gate.
 
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner

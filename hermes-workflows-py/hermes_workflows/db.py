@@ -109,6 +109,7 @@ class Database:
                     "workflow already has an active run, or run id already exists"
                 ) from exc
             self._event(con, state["run_id"], {"type": "run_created", "status": state["status"]})
+            self._trace(con, None, state)
         return state
 
     @staticmethod
@@ -117,6 +118,20 @@ class Database:
             "INSERT INTO py_events(run_id,at,event) VALUES(?,?,?)",
             (run_id, time.time(), json.dumps(event)),
         )
+
+    @staticmethod
+    def _trace(con, before, state, event=None):
+        if not state.get("observability", {}).get("trace_enabled"):
+            return
+        con.execute("SAVEPOINT optional_trace")
+        try:
+            from .trace import transitions
+
+            transitions(con, before, state, event)
+        except Exception:
+            con.execute("ROLLBACK TO optional_trace")
+        finally:
+            con.execute("RELEASE optional_trace")
 
     def get_run(self, run_id: str) -> dict:
         with self.connect() as con:
@@ -174,6 +189,7 @@ class Database:
             if guard is not None:
                 guard(con, state)
             change(state)
+            self._redact_capture(state)
             changed = json.dumps(state) != before or spec is not None
             revoked = invalidate and changed
             next_revision = row["revision"] + int(revoked)
@@ -201,6 +217,7 @@ class Database:
                 self._event(
                     con, run_id, event or {"type": "state_changed", "status": state["status"]}
                 )
+                self._trace(con, json.loads(before), state, event)
         return state
 
     def _sync_attempts(self, con, before, run, revision, restarts):
@@ -218,6 +235,7 @@ class Database:
                 continue
             if node_id in restarts and old.get("attempt_id"):
                 archived = {**old, **restarts[node_id], "status": "completed", "finished_at": now}
+                self._capture_telemetry(con, archived)
                 con.execute(
                     "UPDATE py_attempts SET status='completed',data=?,updated_at=? WHERE attempt_id=?",
                     (json.dumps(archived), now, old["attempt_id"]),
@@ -227,6 +245,7 @@ class Database:
             if state["status"] in ("pending", "skipped"):
                 if old.get("attempt_id") and old["status"] not in NODE_TERMINAL:
                     archived = {**old, "status": "interrupted", "finished_at": now}
+                    self._capture_telemetry(con, archived)
                     con.execute(
                         "UPDATE py_attempts SET status='interrupted',data=?,updated_at=? WHERE attempt_id=?",
                         (json.dumps(archived), now, old["attempt_id"]),
@@ -272,10 +291,43 @@ class Database:
                     ),
                 )
             state.update(attempt_id=identity, iteration=iteration)
+            if state["status"] in NODE_TERMINAL:
+                self._capture_telemetry(con, state)
             con.execute(
                 "UPDATE py_attempts SET status=?,data=?,updated_at=? WHERE attempt_id=? AND run_id=? AND node_id=?",
                 (state["status"], json.dumps(state), now, identity, run["run_id"], node_id),
             )
+
+    def _capture_telemetry(self, con, node):
+        from .telemetry import TelemetryStore
+
+        try:
+            con.execute("SAVEPOINT optional_worker_capture")
+            con.execute(
+                "UPDATE py_worker_approvals SET status='resolved',choice='cancelled',updated_at=? "
+                "WHERE status IN ('pending','answered') AND worker_id IN "
+                "(SELECT worker_id FROM py_workers WHERE attempt_id=?)",
+                (time.time(), node["attempt_id"]),
+            )
+            observed = TelemetryStore(self.path).aggregate(node["attempt_id"], connection=con)
+            if observed:
+                node["telemetry"] = {**node.get("telemetry", {}), **observed}
+        except Exception:
+            con.execute("ROLLBACK TO optional_worker_capture")
+        finally:
+            con.execute("RELEASE optional_worker_capture")
+        self._redact_capture({"nodes": {"node": node}})
+
+    @staticmethod
+    def _redact_capture(run):
+        from .redact import redact
+
+        if isinstance(run.get("error"), str):
+            run["error"] = redact(run["error"])
+        for node in run["nodes"].values():
+            for key in ("output", "error", "telemetry"):
+                if key in node:
+                    node[key] = redact(node[key])
 
     def attempts(self, run_id: str) -> list[dict]:
         self.get_run(run_id)

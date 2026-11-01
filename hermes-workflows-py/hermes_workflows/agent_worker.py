@@ -15,7 +15,14 @@ import time
 from pathlib import Path
 
 
-def run_agent(node: dict, progress=lambda stage: None, *, preflight=False) -> dict:
+def run_agent(
+    node: dict,
+    progress=lambda stage: None,
+    *,
+    preflight=False,
+    telemetry_context=None,
+    worker_approvals_enabled=False,
+) -> dict:
     progress("selecting_profile")
     profile = node.get("profile")
     # Hermes supports both named home profiles and agent-roster profiles. Home
@@ -143,8 +150,29 @@ def run_agent(node: dict, progress=lambda stage: None, *, preflight=False) -> di
         kwargs = {k: v for k, v in kwargs.items() if k in signature.parameters}
     progress("constructing_agent")
     agent = AIAgent(**kwargs)
+    recorder, observer_handles, interactive_token = None, [], None
     started = time.monotonic()
     try:
+        if telemetry_context:
+            from .db import hermes_home
+            from .observer import install_direct
+
+            recorder, observer_handles = install_direct(
+                {**telemetry_context, "profile_home": str(hermes_home().resolve())}
+            )
+        if worker_approvals_enabled:
+            from tools.approval_context import _get_approval_timeout, set_hermes_interactive_context
+            from tools.terminal_tool import set_approval_callback
+
+            def command_approval(command, description, **_kwargs):
+                return (
+                    recorder.approval(command, description, timeout=_get_approval_timeout())
+                    if recorder is not None
+                    else "deny"
+                )
+
+            interactive_token = set_hermes_interactive_context(True)
+            set_approval_callback(command_approval)
         prompt = node["prompt"]
         for skill in node.get("skills", []):
             module = importlib.import_module("tools.skills_tool")
@@ -200,9 +228,24 @@ def run_agent(node: dict, progress=lambda stage: None, *, preflight=False) -> di
         }
     finally:
         progress("closing_agent")
-        close = getattr(agent, "close", None)
-        if callable(close):
-            close()
+        try:
+            close = getattr(agent, "close", None)
+            if callable(close):
+                close()
+        finally:
+            try:
+                if interactive_token is not None:
+                    from tools.approval_context import reset_hermes_interactive_context
+                    from tools.terminal_tool import set_approval_callback
+
+                    reset_hermes_interactive_context(interactive_token)
+                    set_approval_callback(None)
+            finally:
+                for handle in observer_handles:
+                    try:
+                        handle.dispose()
+                    except Exception:
+                        pass
 
 
 def main():
@@ -216,7 +259,13 @@ def main():
             temporary.replace(path)
 
     try:
-        result = run_agent(request["node"], progress, preflight=request.get("preflight", False))
+        result = run_agent(
+            request["node"],
+            progress,
+            preflight=request.get("preflight", False),
+            telemetry_context=request.get("telemetry"),
+            worker_approvals_enabled=request.get("worker_approvals_enabled", False),
+        )
     except Exception as exc:
         result = {
             "outcome": "failure",

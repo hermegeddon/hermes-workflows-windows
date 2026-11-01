@@ -5,6 +5,12 @@ author: "Hermes Workflows Python contributors"
 kind: standalone
 provides_hooks:
   - pre_gateway_dispatch
+  - post_api_request
+  - api_request_error
+  - post_tool_call
+  - subagent_stop
+  - pre_approval_request
+  - post_approval_response
 provides_tools:
   - workflow_list
   - workflow_run
