@@ -553,6 +553,19 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(desktop.read_bytes(), (PLUGIN / "desktop" / "plugin.js").read_bytes())
         self.assertTrue((target / "plugin.yaml").is_file())
         self.assertTrue((target / "dashboard" / "plugin_api.py").is_file())
+        self.assertTrue((target / "_bootstrap.py").is_file())
+        loader_spec = importlib.util.spec_from_file_location(
+            "installed_workflow_loader", target / "_bootstrap.py"
+        )
+        loader = importlib.util.module_from_spec(loader_spec)
+        loader_spec.loader.exec_module(loader)
+        backend = loader.load_backend(target)
+        self.assertEqual(
+            Path(backend.__file__).resolve(), target.resolve() / "hermes_workflows" / "__init__.py"
+        )
+        for name in tuple(sys.modules):
+            if name == backend.__name__ or name.startswith(backend.__name__ + "."):
+                sys.modules.pop(name, None)
         with self.assertRaises(FileExistsError):
             module.install(target)
         module.install(target, update=True)
@@ -766,7 +779,9 @@ class WorkflowTests(unittest.TestCase):
         runtime = self.runtime().start()
         sys.path.insert(0, str(host))
         try:
-            state = runtime.engine.start(workflow([agent("slow", timeout_seconds=0.7)]))
+            # Allow a cold Windows interpreter to reach the deliberately
+            # stalled stage; 0.7s also timed out normal process startup.
+            state = runtime.engine.start(workflow([agent("slow", timeout_seconds=3)]))
             result = self.wait(state["run_id"])
         finally:
             sys.path.remove(str(host))

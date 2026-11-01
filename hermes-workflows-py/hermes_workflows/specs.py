@@ -10,6 +10,7 @@ import threading
 import uuid
 from pathlib import Path
 
+from .adoption import TASK_REF
 from .db import ConflictError, hermes_home
 from .graph import analyse, ancestors, predecessors
 
@@ -104,6 +105,25 @@ def validate(workflow: dict) -> dict:
         ):
             err("empty_command", f"script '{name}' requires a command")
         if kind == "agent_task":
+            for field in ("adopt", "sequential"):
+                if field in node and type(node[field]) is not bool:
+                    err("invalid_adopt", f"'{name}'.{field} must be boolean")
+            for field in ("task_ref", "review_profile"):
+                if field in node and (not isinstance(node[field], str) or not node[field].strip()):
+                    err("invalid_adopt", f"'{name}'.{field} must be a non-empty string")
+                if field in node and node.get("adopt") is not True:
+                    err(f"{field}_without_adopt", f"'{name}'.{field} requires adopt:true")
+            if node.get("sequential") is True and node.get("adopt") is not True:
+                err("sequential_without_adopt", f"'{name}'.sequential requires adopt:true")
+            if node.get("adopt") is True:
+                ref = node.get("task_ref")
+                if not isinstance(ref, str) or not (SLUG.fullmatch(ref) or TASK_REF.fullmatch(ref)):
+                    err(
+                        "invalid_task_ref",
+                        f"'{name}' needs a literal card id or a typed task_ids reference",
+                    )
+                if node.get("board") is False:
+                    err("adopt_off_board", f"'{name}': adopt requires native board execution")
             if "board" in node and type(node["board"]) is not bool:
                 err("invalid_board", f"'{name}'.board must be boolean")
             if not isinstance(node.get("prompt"), str):
@@ -114,10 +134,10 @@ def validate(workflow: dict) -> dict:
             if not isinstance(workspace, dict):
                 err("invalid_workspace", f"'{name}' workspace must be an object")
                 workspace = {}
-            if node.get("adopt") or node.get("stack") or workspace.get("type") == "worktree":
+            if node.get("stack") or workspace.get("type") == "worktree":
                 err(
                     "unsupported_workspace",
-                    f"'{name}': board adoption and managed worktrees require Hermes Kanban; use a workdir for native execution",
+                    f"'{name}': managed worktrees and stacked releases are not implemented; use a workdir",
                 )
         for key in ("profile", "model", "workdir", "title", "description"):
             if key in node and not isinstance(node[key], str):
@@ -397,9 +417,12 @@ def resolve(text: str, run: dict, inputs: dict | None = None) -> str:
                 )
             value = state[parts[2]]
             if len(parts) > 3:
-                if isinstance(value, str):
+                remaining = parts[3:]
+                if remaining[0] == "task_ids" and "task_ids" in state:
+                    value, remaining = state["task_ids"], remaining[1:]
+                elif isinstance(value, str):
                     value = json.loads(value)
-                for part in parts[3:]:
+                for part in remaining:
                     value = value[part]
         return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
@@ -534,6 +557,10 @@ def compile_preview(workflow: dict) -> dict:
                             "workdir",
                             "timeout_seconds",
                             "input_mapping",
+                            "adopt",
+                            "task_ref",
+                            "review_profile",
+                            "sequential",
                         )
                         if k in n
                     },

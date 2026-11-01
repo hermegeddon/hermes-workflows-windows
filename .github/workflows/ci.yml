@@ -39,7 +39,7 @@ jobs:
       - name: Suite including FastAPI and YAML adapters
         run: python -m unittest discover -s tests -v
       - name: Lint
-        run: python -m ruff check hermes-workflows-py/hermes_workflows tests scripts
+        run: python -m ruff check hermes-workflows-py/hermes_workflows hermes-workflows-py/__init__.py hermes-workflows-py/_bootstrap.py hermes-workflows-py/install.py hermes-workflows-py/dashboard/plugin_api.py tests scripts
       - name: Verify committed assets
         run: python scripts/verify_assets.py
 

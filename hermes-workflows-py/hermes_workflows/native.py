@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 FEATURES = {
+    "adoption": ("hermes_cli.kanban_db", ("_append_event", "_canonical_assignee")),
     "kanban": (
         "hermes_cli.kanban_db",
         (

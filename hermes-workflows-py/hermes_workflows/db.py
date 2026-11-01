@@ -34,12 +34,34 @@ def hermes_home() -> Path:
     return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes").expanduser()
 
 
+def _enable_wal(con, *, timeout=15):
+    # Switching journal mode can return BUSY immediately despite busy_timeout
+    # when several hosts initialize/migrate the same DELETE-mode database.
+    # Retry that operation explicitly, with a bounded wall-clock budget.
+    original_timeout = con.execute("PRAGMA busy_timeout").fetchone()[0]
+    deadline = time.monotonic() + timeout
+    try:
+        con.execute("PRAGMA busy_timeout=0")
+        while True:
+            try:
+                con.execute("PRAGMA journal_mode=WAL").fetchone()
+                return
+            except sqlite3.OperationalError as exc:
+                code = getattr(exc, "sqlite_errorcode", 0) & 0xFF
+                remaining = deadline - time.monotonic()
+                if code not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED) or remaining <= 0:
+                    raise
+                time.sleep(min(0.05, remaining))
+    finally:
+        con.execute(f"PRAGMA busy_timeout={int(original_timeout)}")
+
+
 class Database:
     def __init__(self, path: Path | str | None = None):
         self.path = Path(path) if path is not None else hermes_home() / "workflows" / "runs.db"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as con:
-            con.execute("PRAGMA journal_mode=WAL")
+            _enable_wal(con)
         with self.connect(write=True) as con:
             migrate(con)
 

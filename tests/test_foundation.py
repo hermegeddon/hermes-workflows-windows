@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 PLUGIN = Path(__file__).resolve().parents[1] / "hermes-workflows-py"
 sys.path.insert(0, str(PLUGIN))
-from hermes_workflows.db import ConflictError, Database
+from hermes_workflows.db import ConflictError, Database, _enable_wal
 from hermes_workflows.effects import EffectStore
 from hermes_workflows.engine import Engine
 from hermes_workflows.executor import Executor, Result
@@ -143,6 +143,38 @@ class StorageTests(unittest.TestCase):
             out, err = process.communicate(timeout=20)
             self.assertEqual(process.returncode, 0, (out, err))
         self.assertEqual(len(Database(self.path).attempts("legacy")), 1)
+
+    def test_wal_startup_lock_is_bounded_and_recoverable(self):
+        with (
+            closing(sqlite3.connect(self.path, isolation_level=None)) as writer,
+            closing(sqlite3.connect(self.path, isolation_level=None)) as contender,
+        ):
+            writer.execute("CREATE TABLE sentinel(value)")
+            writer.execute("INSERT INTO sentinel VALUES('preserved')")
+            writer.execute("BEGIN EXCLUSIVE")
+            contender.execute("PRAGMA busy_timeout=37")
+            with self.assertRaises(sqlite3.OperationalError) as caught:
+                _enable_wal(contender, timeout=0.1)
+            self.assertEqual(caught.exception.sqlite_errorcode & 0xFF, sqlite3.SQLITE_BUSY)
+            self.assertEqual(contender.execute("PRAGMA busy_timeout").fetchone()[0], 37)
+            writer.rollback()
+            _enable_wal(contender)
+            self.assertEqual(contender.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+            self.assertEqual(
+                contender.execute("SELECT value FROM sentinel").fetchone()[0], "preserved"
+            )
+
+    def test_wal_startup_does_not_retry_permanent_readonly_error(self):
+        with closing(sqlite3.connect(self.path)) as writer:
+            writer.execute("CREATE TABLE sentinel(value)")
+            writer.commit()
+        with closing(sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)) as reader:
+            statements = []
+            reader.set_trace_callback(statements.append)
+            with self.assertRaises(sqlite3.OperationalError) as caught:
+                _enable_wal(reader, timeout=0.2)
+            self.assertEqual(caught.exception.sqlite_errorcode & 0xFF, sqlite3.SQLITE_READONLY)
+            self.assertEqual(sum(s == "PRAGMA journal_mode=WAL" for s in statements), 1)
 
     def active(self):
         db = Database(self.path)

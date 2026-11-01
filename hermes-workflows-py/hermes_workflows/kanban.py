@@ -42,7 +42,11 @@ def board_for(workflow, project_id=None):
 
 
 def on_board(node, board):
-    return node["type"] == "agent_task" and bool(board) and node.get("board") is not False
+    return (
+        node["type"] == "agent_task"
+        and (bool(board) or node.get("adopt") is True)
+        and node.get("board") is not False
+    )
 
 
 def completion(task, latest):
@@ -87,6 +91,7 @@ class KanbanExecutor:
         self.db, self.host = db, host
         self.effects = EffectStore(db)
         self.poll_seconds = poll_seconds
+        self.adoption = None
 
     @contextmanager
     def board(self, slug, *, expected=None, ensure=False):
@@ -240,6 +245,20 @@ class KanbanExecutor:
         return handle
 
     async def execute(self, node, run, board, *, owner, revision, attempt_id, timeout):
+        if node.get("adopt"):
+            from .adoption import AdoptionExecutor
+
+            if self.adoption is None:
+                self.adoption = AdoptionExecutor(self)
+            return await self.adoption.execute(
+                node,
+                run,
+                board,
+                owner=owner,
+                revision=revision,
+                attempt_id=attempt_id,
+                timeout=timeout,
+            )
         try:
             handle = self.schedule(
                 node,

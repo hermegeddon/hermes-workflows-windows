@@ -335,8 +335,8 @@ The normal dispatcher interval can delay a newly queued card.
 
 Cards carry the profile, model, skills, runtime cap, native retry setting and
 workflow/step IDs. An explicit `workdir` uses a native `dir` workspace; otherwise
-the native dispatcher manages a scratch workspace. Managed Git worktrees and
-card adoption remain separate features. Node-specific toolset, token/iteration
+the native dispatcher manages a scratch workspace. Managed Git worktrees remain
+a separate feature. Node-specific toolset, token/iteration
 and external-secret overrides are not representable by the installed native
 card API and fail explicitly; use `board: false` for those overrides.
 
@@ -354,6 +354,73 @@ After installing this change, restart the gateway and refresh/reopen the workflo
 view before testing. No production cards or model workers were created during
 the automated integration checks.
 
+### Adopt existing cards
+
+Directory plugins load their backend inside Hermes' profile namespace. Dashboard
+handlers resolve the code from the same installation path, so another profile's
+older plugin copy cannot replace it through Python's global imports. Restart the
+gateway and any standalone dashboard after updating backend code. Other
+long-running Hermes CLI hosts, including `subscription-proxy start`, also load
+plugins and can retain a workflow supervisor. Refresh those hosts once their
+work is idle; old processes must not keep driving the same profile's run database.
+
+An agent node with `adopt: true` drives existing cards on the run's project board:
+
+```json
+{
+  "id": "implement",
+  "type": "agent_task",
+  "prompt": "Existing card instructions apply",
+  "profile": "worker",
+  "adopt": true,
+  "task_ref": "{{nodes.select.output.task_ids}}",
+  "review_profile": "reviewer",
+  "sequential": true
+}
+```
+
+Author these fields in the workflow JSON/YAML. `task_ref` also accepts one literal
+card ID. A referenced ancestor should emit the selected IDs in a fenced
+`task_ids` block or `<task_ids>...</task_ids>` tag. Structured IDs take precedence
+over unrelated IDs in prose; legacy prose-only output still uses upstream's
+ID-token fallback. Empty selections and missing cards stop the workflow before
+downstream work. Compile preview preserves the adoption fields.
+
+The cards retain their IDs, bodies, creators, workspaces and model/tool settings;
+the node's profile assigns cards awaiting dispatch. Running/review/terminal cards
+are not reassigned on adoption. Multiple cards run concurrently unless
+`sequential` is true or internal dependency links require prerequisite order.
+Sequential execution continues after a card fails, aggregates the failure and
+joins final outputs. An optional `review_profile` routes each successful card
+through native review and waits for a new native run's result before advancing.
+The reviewer profile must have Hermes' bundled `sdlc-review` skill installed;
+profiles created with `--no-skills` need that skill before native review can run.
+
+The adoption plan and attempt handle survive restart. A small namespaced receipt
+table on the native board commits with each adoption/review transition, preventing
+a lost acknowledgement from repeating a fast review. Cancellation, explicit retry
+and timeout never archive, delete, recreate or unlink adopted user cards; an
+already-dispatched native worker may continue after the workflow stops. Three
+consecutive dispatch failures on a parked card fail the node. A blocked-card
+clock persists across restart, resets after recovery and is bounded by six hours
+and the node's overall timeout, whichever expires first.
+
+The installed Hermes re-checks parent dependencies at claim time and removed
+forced promotion. This backend preserves those gates: unfinished external
+parents, cyclic dependencies, or excluded umbrella parents still gating a child
+produce an actionable failure. It never drops user dependency links to bypass
+them. Umbrella-only scopes fail immediately. This differs from pinned upstream's
+attempt to force-promote umbrella children. Complete the parents or explicitly
+adjust the board links before adopting those leaves.
+
+`scripts/verify_native_adoption.py --hermes-source <checkout>` checks real native
+claims, review and recovery in temporary storage without launching model workers.
+Live Windows web/Desktop adoption acceptance passed on November 1 with a guarded
+local provider: dependency ordering, native implementation/review, Desktop human
+approval, and cancellation preserving an existing card. See
+[`docs/compatibility.md`](../docs/compatibility.md) for evidence and host setup
+requirements. Managed worktrees and release stacking are not enabled here.
+
 Native adapter availability can be inspected without executing workflows:
 
 ```powershell
@@ -369,8 +436,8 @@ in this backend yet.
 
 The dashboard's current client routes are implemented, but the Python backend
 does not reproduce every upstream integration. Bound project agent tasks use
-native Kanban; global and explicitly off-board tasks execute directly. Card
-adoption, stacked releases, and managed worktree nodes fail validation; use
+native Kanban; global and explicitly off-board tasks execute directly. Adoption
+requires a bound project board. Stacked releases and managed worktree nodes fail validation; use
 explicit `workdir` paths for existing directories.
 Conditional loop edges are implemented. Workflow result delivery and
 OpenSecondBrain writes are not implemented. The O2B badge reports local

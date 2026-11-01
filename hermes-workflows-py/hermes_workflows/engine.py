@@ -10,6 +10,7 @@ import uuid
 from graphlib import TopologicalSorter
 
 from . import settings as settings_module
+from .adoption import AdoptionError, extract_task_ids
 from .db import ACTIVE, NODE_TERMINAL, TERMINAL, ConflictError, Database, hermes_home
 from .effects import EffectStore
 from .executor import Executor, Result
@@ -533,6 +534,8 @@ class Engine:
         run, _, _ = self.db.execution(run_id, owner=owner, revision=revision)
         if run["nodes"][raw["id"]].get("attempt_id") != attempt_id:
             raise ConflictError("node attempt was superseded")
+        native_card = False
+        abort = False
         try:
             node = copy.deepcopy(raw)
             board = run.get("board") or board_for(workflow, run.get("project_id"))
@@ -598,7 +601,11 @@ class Engine:
                             )
                         else:
                             result = await self.executor.execute(node, run, config)
+                except AdoptionError:
+                    raise
                 except Exception as exc:
+                    if raw.get("adopt") is True:
+                        raise AdoptionError(f"adopt failed: {exc}") from exc
                     result = Result("failure", error=f"{type(exc).__name__}: {exc}")
                 # Replaying deterministic shell commands after errors can repeat
                 # side effects. Automatic retries apply only to transient agents.
@@ -640,7 +647,10 @@ class Engine:
                 attempt_id = run["nodes"][raw["id"]]["attempt_id"]
                 await asyncio.sleep(min(2**attempt, 30))
         except Exception as exc:
-            result = Result("failure", error=f"{type(exc).__name__}: {exc}")
+            abort = isinstance(exc, AdoptionError) or raw.get("adopt") is True
+            result = Result(
+                "failure", str(exc) if abort else "", error=f"{type(exc).__name__}: {exc}"
+            )
 
         def settle(state):
             if state["status"] in TERMINAL:
@@ -655,6 +665,11 @@ class Engine:
             )
             if result.error:
                 current["error"] = result.error
+            if abort:
+                current["abort_run"] = True
+            task_ids = extract_task_ids(result.output)
+            if task_ids:
+                current["task_ids"] = task_ids
             if result.telemetry:
                 current["telemetry"] = result.telemetry
 

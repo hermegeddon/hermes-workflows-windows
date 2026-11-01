@@ -46,8 +46,8 @@ Local implementation evidence is in
 | Script nodes | Implemented with enable gate, environment allowlist, timeout and process-tree cancellation; native CMD/PowerShell/Unicode tests pass | `executor.py`; retain coverage during hwp-6pu.5 and hwp-6pu.16 |
 | Direct agent nodes | Implemented with profile/model/skills, bounded isolated Python worker, final output and transient retries | `agent_worker.py`, `Executor`, agent-result fixtures; retain global and `board=false` execution during hwp-6pu.6 |
 | Default project agent execution | Implemented native card creation/polling, profile/model/skills/runtime/retry options, workflow metadata and durable handles. Global, unbound and `board:false` nodes remain direct; unrepresentable overrides fail explicitly | `kanban.py`, `Engine`, compile-preview routing and native/isolated tests; hwp-6pu.6 |
-| Board/project resolution and task links | Explicit run project wins over declared first project; missing boards auto-ensure and archived boards fail. Existing gateway dispatcher owns claims/caps. Dependency links for adoption remain missing | `board_for`, scoped native connections; hwp-6pu.6, hwp-6pu.7 |
-| Adopted cards | Missing: `adopt` is rejected; task-id extraction, card review, dependency ordering, sequential scopes and stuck/blocked handling are absent | U3/U4 and `test_engine_adopt.py`; hwp-6pu.7 |
+| Board/project resolution and task links | Explicit run project wins over declared first project; missing boards auto-ensure and archived boards fail. Existing gateway dispatcher owns claims/caps. Adoption respects internal dependency order and preserves native parent gates | `board_for`, scoped native connections, `adoption.py`; hwp-6pu.6, hwp-6pu.7 |
+| Adopted cards | Implemented literal/typed task references, structured-ID extraction, concurrent/sequential scopes, native review, restart receipts and bounded blocked/stuck handling. Current-host dependency gates intentionally prevent pinned force-promote behavior for umbrella children or cyclic/external unfinished parents. Windows web/Desktop live adoption and cancellation passed | U3/U4, `test_adoption.py`, frozen reference fixtures and native verification; hwp-6pu.7 |
 | Managed scratch/worktree workspaces and stacked branches | Native board cards use dispatcher-managed scratch or explicit dir workspaces. Worktree/stack is still rejected | U4 and `test_dispatch_worktree_conformance.py`, `test_adopt_branch_anchor.py`; hwp-6pu.8 |
 | Prompt nodes and ancestor input references | Implemented for DAGs/cycles with runtime channel-availability checks and single-pass named mapping substitution; unavailable current-iteration values fail rather than becoming empty text | `specs.resolve`, `Engine._execute`, loop input fixtures; hwp-6pu.5 |
 | Human review through API, tool, CLI, web and Desktop | Implemented with allowed decisions, notes and immutable run-spec review options; maintained web/Desktop clients fence requests with attempt IDs and handle fast re-entry/late acknowledgements | Review loop/restart/stale-token tests. Re-entry clears old decisions instead of retaining the pinned upstream value; hwp-6pu.5 |
@@ -63,7 +63,7 @@ Local implementation evidence is in
 | Traces and log export | Partial SQLite lifecycle events included on export when enabled; not upstream redacted JSONL event/marker/attempt coverage | `api.py`, `db.py`; U8; hwp-6pu.12 |
 | Portable template export | Partial cached snapshot plus generic adaptation guide; structured de-binding, placeholder inventory and composite provenance/model cache are missing | `api.py` export-template; U9; hwp-6pu.13 |
 | Settings | Implemented subset in SQLite; upstream config/env/default precedence and Kanban/memory/tick settings are missing | `settings.py`; U10; hwp-6pu.14 |
-| Compile preview, API and command compatibility | Dashboard routes are implemented; plan content reflects direct-only execution, and upstream CLI/tool verbs such as `resume` differ | `specs.compile_preview`, `api.py`, `cli.py`, `__init__.py`; U10; hwp-6pu.5/.6/.13/.14/.15 |
+| Compile preview, API and command compatibility | Dashboard routes are implemented; plan content includes board routing and adoption fields. Upstream CLI/tool verbs such as `resume` differ | `specs.compile_preview`, `api.py`, `cli.py`, `__init__.py`; U10; hwp-6pu.5/.6/.7/.13/.14/.15 |
 | Web and native Desktop integration | Implemented and live-tested on Windows default/named profiles and remote macOS review workflows | `frontend/src/desktop`, SDK owner/stale-request tests; each feature must include relevant UI coverage, final gate hwp-6pu.16 |
 
 ## Execution and integration decisions
@@ -204,6 +204,99 @@ independent deadlines and report the last state on timeout. Native plugin
 registration, unload, dashboard mounting, review and loop-review HTTP checks also
 passed with the Hermes-managed runtime. Lint, all eight asset hashes and the four
 dashboard-loader tests passed; frontend source and bundles were unchanged.
+
+The adoption checkpoint (2026-11-01) adds durable scope plans and immutable
+attempt handles. Board-local receipts are committed atomically with native audit
+events and assignment/promotion/review updates, while the workflow write fence
+serializes cancellation and retry. Native assignment/promotion helpers commit
+independently and reject nested transactions, so the adapter composes their
+guarded column changes under the native write transaction instead of publishing
+half a handoff. It requires the native audit and profile-normalization APIs;
+workers, concurrency and claim ownership remain native.
+
+Frozen extraction and ordering decisions were generated directly from the pinned
+Python engine, with source SHA-256 recorded in
+`tests/fixtures/adoption-reference.json`. Regenerate them with
+`python scripts/generate_adoption_reference.py`. Isolated regressions include
+process death after the review commit followed by an offline reviewer result,
+sequential recovery, scope errors, profile fences, cancellation and blocked-clock
+recovery. `scripts/verify_native_adoption.py` exercises real installed native
+implementer/reviewer claims, final summaries and dependency ordering without
+launching model workers. User card IDs, bodies, creators and dependency links are
+preserved. A receipt alone does not count as review completion: a subsequent
+native run is required.
+
+Installed Hermes' promotion API no longer accepts `force`, and both claim paths
+re-check unfinished parents. The adapter therefore fails clearly on an excluded
+umbrella parent still gating its children, an unfinished external parent, or a
+cyclic scope. It never removes links or bypasses the native claim rule. This is
+an explicit difference from the pinned engine's forced-promotion fallback.
+Live web/Desktop adoption acceptance passed on November 1, as detailed below.
+This checkpoint does not claim managed worktree/stack support or full feature parity.
+
+Final Windows validation passed 119 tests on Python 3.11 and Python 3.14 without
+optional packages (two skips). This includes 20 adoption tests and two new WAL
+startup tests. Concurrent initialization exposed a pre-existing `journal_mode`
+lock race: WAL switching now retries only SQLite BUSY/LOCKED within a 15-second
+budget and restores the connection's busy timeout; permanent errors propagate.
+Twelve additional concurrent-migration rounds (48 child initializations) passed
+on managed Python 3.14. The worker-stage diagnostic test now allows three seconds
+for cold Windows startup before timing out its intentionally stalled loader.
+Native adoption verification passed with both Windows runtimes, and existing
+native card creation, restart, cancellation and concurrency checks still passed.
+No model workers were launched. Lint, asset verification and all four loader
+tests passed; frontend source and bundles were unchanged.
+
+Live adoption validation exposed an installation-import bug that isolated engine
+tests did not cover: the directory entrypoint and dashboard router imported the
+process-global `hermes_workflows` package after changing `sys.path`. An older
+copy in another profile could therefore supply the gateway's engine even when
+the selected plugin directory was current. Directory registration now uses
+Hermes' profile namespace; the router resolves the backend belonging to its own
+real installation path, with an isolated fallback for file-only hosts. Four
+new regressions cover canonical-module poisoning, distinct copies/concurrent
+loads, failed-import rollback and matching dashboard routing. The native verifier
+now uses Hermes' actual directory loader with a deliberately poisoned canonical
+package. Registration, unload and review/loop HTTP contracts passed, as did the
+full 123-test suites on Windows Python 3.11 and 3.14 (three optional skips on
+3.14). A gateway restart is required to replace already-loaded legacy modules.
+
+The first live fixture was aborted and is not acceptance evidence. Native
+auto-decomposition processed its triage cards before explicit adoption, assigning
+cards to configured profiles. One verification-engineer session used the existing
+ChatGPT subscription (24,326 input / 222 output tokens); no claim of zero external
+usage is made for that attempt. All five disposable cards were accounted for;
+nonterminal fixture cards were archived, native runs reclaimed, and the QA
+profile's config/environment restored exactly. Audit artifacts are in the ignored
+`.cache/dashboard-check/adoption-live-qa/` directory. Replacement fixtures must
+publish atomically as sticky-blocked work or unassigned manual review, never as
+globally visible triage/ready work, and a no-model attempt-identity canary must
+pass before any new worker test.
+
+The replacement live test passed on Windows after refreshing an additional stale
+supervisor inside a long-running subscription proxy. Restarting the gateway alone
+had not retired that process. Subsequent no-model canaries received current
+attempt identities. Workflow `adoption-live-qa-v2-696a6406c06e` started in the web
+dashboard, adopted a completed selector's structured task IDs, reordered the two
+selected cards by their existing dependency, and ran each implementer and native
+reviewer in sequence. Desktop approved the final human gate; both frontends
+displayed completion. Desktop also started and cancelled
+`adoption-cancel-live-qa-v2-4d7d270c104a`, leaving its adopted card unassigned in
+manual review, with no native worker or card replacement.
+
+The QA profile initially lacked the native review lane's required `sdlc-review`
+skill. Two reviewer attempts failed before model admission; temporarily supplying
+the bundled skill and using native unblock recovered the same workflow attempt.
+The second implementer's startup also completed pending Hermes dependency setup.
+The four successful native turns made eight requests to a guarded loopback fake
+provider; session billing metadata confirms that endpoint. The two failed turns
+recorded zero tokens. This local-only result applies to the replacement fixture,
+not the aborted subscription-backed test above. Audit assertions verified the
+original card IDs, titles, bodies, creators and dependency link, six durable
+adoption/review receipts, and an untouched unrelated blocked sentinel. The QA
+config and environment were restored byte-for-byte, the temporary skill and
+backup copies removed, and both fixture workflows disabled. History and proof
+images remain in `.cache/dashboard-check/adoption-live-qa-v2/`.
 
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner

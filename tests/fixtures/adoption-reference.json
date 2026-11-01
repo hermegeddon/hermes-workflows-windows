@@ -1,0 +1,104 @@
+{
+  "reference": {
+    "commit": "352e5ffb751e4798e66dcdf1dbe9a80dff768c0f",
+    "source": "hermes_workflows/engine.py",
+    "source_sha256": "dd43f4b675e4945e3b5de797b247ba03d93687f5daab2eaae943f3487dcd9c76"
+  },
+  "extraction": [
+    {
+      "text": null,
+      "ids": []
+    },
+    {
+      "text": "just prose t_stray",
+      "ids": []
+    },
+    {
+      "text": "Locked.\n```task_ids\nt_aaaa\nt_bbbb\nt_aaaa\n```\nignore t_cccc",
+      "ids": [
+        "t_aaaa",
+        "t_bbbb"
+      ]
+    },
+    {
+      "text": "<task_ids>t_aaaa, t_bbbb</task_ids>",
+      "ids": [
+        "t_aaaa",
+        "t_bbbb"
+      ]
+    },
+    {
+      "text": "```TASK_IDS\nt_a\n``` <task_ids>t_b t_a</task_ids>",
+      "ids": [
+        "t_a",
+        "t_b"
+      ]
+    }
+  ],
+  "ordering": [
+    {
+      "ids": [
+        "c",
+        "a",
+        "b"
+      ],
+      "links": [
+        [
+          "a",
+          "c"
+        ],
+        [
+          "b",
+          "c"
+        ]
+      ],
+      "ordered": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    {
+      "ids": [
+        "c",
+        "a",
+        "b"
+      ],
+      "links": [
+        [
+          "a",
+          "b"
+        ],
+        [
+          "b",
+          "a"
+        ]
+      ],
+      "ordered": [
+        "c",
+        "a",
+        "b"
+      ]
+    },
+    {
+      "ids": [
+        "a",
+        "b"
+      ],
+      "links": [
+        [
+          "other",
+          "a"
+        ],
+        [
+          "a",
+          "a"
+        ]
+      ],
+      "ordered": [
+        "a",
+        "b"
+      ]
+    }
+  ]
+}

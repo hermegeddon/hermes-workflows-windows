@@ -23,7 +23,13 @@ def install(destination: Path | None = None, *, update: bool = False) -> Path:
             "plugin directory already exists; stop Hermes and pass --update to overwrite plugin files"
         )
     target.mkdir(parents=True, exist_ok=True)
-    for name in ("plugin.yaml", "__init__.py", "README.md", "THIRD_PARTY_NOTICES.md"):
+    for name in (
+        "plugin.yaml",
+        "__init__.py",
+        "_bootstrap.py",
+        "README.md",
+        "THIRD_PARTY_NOTICES.md",
+    ):
         shutil.copy2(source / name, target / name)
     for name in ("hermes_workflows", "dashboard", "desktop", "examples"):
         shutil.copytree(

@@ -15,6 +15,7 @@ import site
 import sys
 import tempfile
 import time
+import types
 from pathlib import Path
 
 
@@ -29,6 +30,8 @@ def activate(source: Path):
 
 
 def host_contract(plugin: Path) -> dict:
+    import importlib
+
     import httpx
     from fastapi import FastAPI
     from hermes_cli.plugins import PluginContext, PluginManager
@@ -39,8 +42,6 @@ def host_contract(plugin: Path) -> dict:
         _plugin_route_secret_scope,
     )
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
-    from hermes_workflows import register
-    from hermes_workflows.runtime import get_runtime
 
     with tempfile.TemporaryDirectory(prefix="workflow native contract ") as temporary:
         home = Path(temporary)
@@ -51,6 +52,15 @@ def host_contract(plugin: Path) -> dict:
         plugin = selected
         token = set_hermes_home_override(home)
         manager = None
+        canonical = sys.modules.get("hermes_workflows")
+        poisoned = types.ModuleType("hermes_workflows")
+        poisoned.__file__ = str(home / "older-profile/hermes_workflows/__init__.py")
+
+        def wrong_register(ctx):
+            raise AssertionError("selected another installation's canonical backend")
+
+        poisoned.register = wrong_register
+        sys.modules["hermes_workflows"] = poisoned
         try:
             (home / "config.yaml").write_text(
                 "plugins:\n  isolation: in_process\n", encoding="utf-8"
@@ -59,7 +69,11 @@ def host_contract(plugin: Path) -> dict:
             if manifest is None:
                 raise RuntimeError("Hermes rejected the plugin manifest")
             manager = PluginManager()
-            register(PluginContext(manifest, manager))
+            entry_module = manager._load_directory_module(manifest)
+            entry_module.register(PluginContext(manifest, manager))
+            get_runtime = importlib.import_module(
+                entry_module.register.__module__ + ".runtime"
+            ).get_runtime
             runtime = get_runtime(home)
             assert runtime.thread.is_alive()
             assert len(manager._plugin_tool_names) == 5
@@ -216,6 +230,7 @@ def host_contract(plugin: Path) -> dict:
             assert not manager._plugin_tool_names
             return {
                 "plugin_registration": "passed",
+                "directory_import_isolation": "passed",
                 "unload": "passed",
                 "native_dashboard_mount": "passed",
                 "dashboard_run_review": "passed",
@@ -224,6 +239,10 @@ def host_contract(plugin: Path) -> dict:
         finally:
             if manager is not None:
                 manager.unload()
+            if canonical is None:
+                sys.modules.pop("hermes_workflows", None)
+            else:
+                sys.modules["hermes_workflows"] = canonical
             reset_hermes_home_override(token)
 
 
