@@ -1,0 +1,1384 @@
+{
+  "reference": {
+    "commit": "352e5ffb751e4798e66dcdf1dbe9a80dff768c0f",
+    "source_sha256": {
+      "hermes_workflows/resume.py": "7333e4ec0fe032191ab7f73db31646c1d548cb3bdcccbd050a515535310fd723",
+      "hermes_workflows/engine.py": "dd43f4b675e4945e3b5de797b247ba03d93687f5daab2eaae943f3487dcd9c76",
+      "hermes_workflows/tools.py": "3d126d8f70ce716f773dab045f6ecd82768168e2735e608661298a980a1dd3a4",
+      "hermes_workflows/plugin.py": "60dda2a7ca23d91f754278cb8f267023d2b95c7239efb3a79784c6ad3bbfd296",
+      "hermes_workflows/wait.py": "3a4514c59fd9ae96175e34f1c2ca7ed7f01413f7d2df7f492d3e4160d57fa2b6",
+      "hermes_workflows/cli.py": "cd9b2045e564ae7a09beaedaf64a2c29cb9144f4cea4fa3d77f856f1859e616a"
+    }
+  },
+  "resumes": [
+    {
+      "name": "single",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "target": "b",
+        "all": false
+      }
+    },
+    {
+      "name": "none",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "name": "many",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "name": "created",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "created",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "name": "running",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "running",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "name": "waiting",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "waiting",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "name": "explicit",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": "b",
+      "all": false,
+      "expected": {
+        "target": "b",
+        "all": false
+      }
+    },
+    {
+      "name": "explicit_success",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": "b",
+      "all": false,
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "name": "unknown",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": "absent",
+      "all": false,
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "name": "all",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": true,
+      "expected": {
+        "target": null,
+        "all": true
+      }
+    },
+    {
+      "name": "completed_all",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "completed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": true,
+      "expected": {
+        "target": null,
+        "all": true
+      }
+    },
+    {
+      "name": "legacy",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "status": "completed"
+          },
+          "b": {
+            "status": "failed"
+          },
+          "end": {
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "target": "b",
+        "all": false
+      }
+    },
+    {
+      "name": "retyped",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "script",
+            "command": "echo ok"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "name": "added",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          },
+          {
+            "id": "extra",
+            "type": "condition"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "name": "removed",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "name": "content_edit",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fixed"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "b",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "target": "b",
+        "all": false
+      }
+    },
+    {
+      "name": "edge_edit",
+      "run": {
+        "run_id": "reference-run",
+        "workflow_id": "reference",
+        "status": "failed",
+        "nodes": {
+          "a": {
+            "node_type": "agent_task",
+            "status": "completed"
+          },
+          "b": {
+            "node_type": "agent_task",
+            "status": "failed"
+          },
+          "end": {
+            "node_type": "finish",
+            "status": "pending"
+          }
+        }
+      },
+      "workflow": {
+        "id": "reference",
+        "name": "Reference",
+        "version": 1,
+        "scope": {
+          "type": "global"
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "qa"
+        },
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent_task",
+            "prompt": "prefix"
+          },
+          {
+            "id": "b",
+            "type": "agent_task",
+            "prompt": "fix me"
+          },
+          {
+            "id": "end",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "a",
+            "to": "b"
+          },
+          {
+            "from": "a",
+            "to": "end"
+          }
+        ]
+      },
+      "node": null,
+      "all": false,
+      "expected": {
+        "target": "b",
+        "all": false
+      }
+    }
+  ],
+  "catalog": [
+    {
+      "id": "release",
+      "name": "Feature Release"
+    },
+    {
+      "id": "release-docs",
+      "name": "Feature Release Docs"
+    },
+    {
+      "id": "audit",
+      "name": "Audit"
+    }
+  ],
+  "natural_language": [
+    {
+      "text": "",
+      "expected": {
+        "question": "Which workflow should I run? Try `/workflow <id> <instruction>`."
+      }
+    },
+    {
+      "text": "unknown",
+      "expected": {
+        "question": "I could not match a workflow in 'unknown'. Which one did you mean? Available: audit, release, release-docs. Try `/workflow <id> <instruction>`."
+      }
+    },
+    {
+      "text": "release",
+      "expected": {
+        "workflow_id": "release",
+        "input": null
+      }
+    },
+    {
+      "text": "RELEASE scope 3",
+      "expected": {
+        "workflow_id": "release",
+        "input": "scope 3"
+      }
+    },
+    {
+      "text": "Feature Release ship it",
+      "expected": {
+        "workflow_id": "release",
+        "input": "ship it"
+      }
+    },
+    {
+      "text": "Feature Release Docs only docs",
+      "expected": {
+        "workflow_id": "release-docs",
+        "input": "only docs"
+      }
+    },
+    {
+      "text": "audit żółć",
+      "expected": {
+        "workflow_id": "audit",
+        "input": "żółć"
+      }
+    }
+  ],
+  "ambiguous": {
+    "catalog": [
+      {
+        "id": "one",
+        "name": "Same"
+      },
+      {
+        "id": "two",
+        "name": "Same"
+      }
+    ],
+    "text": "Same ship",
+    "expected": {
+      "question": "That could be any of: one, two. Which workflow did you mean?"
+    }
+  },
+  "inline_modes": {
+    "durable": false,
+    "direct": true,
+    "auto": true
+  },
+  "run_arguments": [
+    {
+      "tokens": [],
+      "expected": {
+        "project_id": null,
+        "params": {}
+      }
+    },
+    {
+      "tokens": [
+        "demo",
+        "count=3",
+        "text=two words"
+      ],
+      "expected": {
+        "project_id": "demo",
+        "params": {
+          "count": "3",
+          "text": "two words"
+        }
+      }
+    },
+    {
+      "tokens": [
+        "count=3"
+      ],
+      "expected": {
+        "project_id": null,
+        "params": {
+          "count": "3"
+        }
+      }
+    },
+    {
+      "tokens": [
+        "=bad"
+      ],
+      "expected": {
+        "refused": true
+      }
+    },
+    {
+      "tokens": [
+        "demo",
+        "stray"
+      ],
+      "expected": {
+        "refused": true
+      }
+    }
+  ],
+  "cli_arguments": [
+    {
+      "tokens": [
+        "resume",
+        "r"
+      ],
+      "expected": {
+        "command": "resume",
+        "run_id": "r",
+        "node": null,
+        "all": false
+      }
+    },
+    {
+      "tokens": [
+        "resume",
+        "r",
+        "--node",
+        "b"
+      ],
+      "expected": {
+        "command": "resume",
+        "run_id": "r",
+        "node": "b",
+        "all": false
+      }
+    },
+    {
+      "tokens": [
+        "resume",
+        "r",
+        "--all"
+      ],
+      "expected": {
+        "command": "resume",
+        "run_id": "r",
+        "node": null,
+        "all": true
+      }
+    },
+    {
+      "tokens": [
+        "run",
+        "qa",
+        "--project",
+        "demo",
+        "--origin",
+        "discord:fixture",
+        "--input",
+        "scope 3",
+        "--params",
+        "{\"count\":3}"
+      ],
+      "expected": {
+        "command": "run",
+        "workflow_id": "qa",
+        "project": "demo",
+        "origin": "discord:fixture",
+        "input": "scope 3",
+        "params": "{\"count\":3}"
+      }
+    }
+  ],
+  "pr_states": [
+    {
+      "state": "MERGED",
+      "expected": "success"
+    },
+    {
+      "state": "CLOSED",
+      "expected": "failure"
+    },
+    {
+      "state": "OPEN",
+      "expected": null
+    },
+    {
+      "state": null,
+      "expected": null
+    },
+    {
+      "state": "UNKNOWN",
+      "expected": null
+    }
+  ],
+  "python_decisions": {
+    "failure_state": "completed/outcome=failure for executable nodes is a failed target",
+    "descendants": "reopen skipped/cancelled descendants on resume; keep settled prefix and attempt history",
+    "slash_response": "retain existing JSON responses and Windows literal backslashes",
+    "mode": "durable releases the lease after a settled batch; direct drains at most 64 script-only batches per lease; both use resident async supervision"
+  }
+}

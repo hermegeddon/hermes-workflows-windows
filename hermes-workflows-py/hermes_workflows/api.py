@@ -42,6 +42,7 @@ ROUTES = [
     ("POST", "/runs/{run_id}/review"),
     ("POST", "/runs/{run_id}/cancel"),
     ("POST", "/runs/{run_id}/retry"),
+    ("POST", "/runs/{run_id}/resume"),
     ("POST", "/runs/{run_id}/approvals/{request_id}"),
     ("GET", "/schedules"),
     ("PUT", "/schedules/{job_id}"),
@@ -191,7 +192,9 @@ class API:
             if action == "validate" and method == "POST":
                 return validate(wf)
             if action == "compile-preview" and method == "POST":
-                return compile_preview(wf)
+                return compile_preview(
+                    wf, mode=settings.values(db)["default_mode"], project_id=payload.get("project_id")
+                )
             if action == "run" and method == "POST":
                 state = engine.start(
                     wf,
@@ -318,6 +321,19 @@ class API:
                     raise ValueError("node_id must be a non-empty string")
                 workflow = store.get(state["workflow_id"])["workflow"]
                 result = engine.retry(run_id, workflow, payload.get("node_id"))
+                runtime.start()
+                return result
+            if action == "resume" and method == "POST":
+                if set(payload) - {"node", "node_id", "all"}:
+                    raise ValueError("unknown resume option")
+                if "node" in payload and "node_id" in payload:
+                    raise ValueError("node and node_id are mutually exclusive")
+                result = engine.resume(
+                    run_id,
+                    store.get(state["workflow_id"])["workflow"],
+                    node=payload.get("node", payload.get("node_id")),
+                    reset_all=payload.get("all", False),
+                )
                 runtime.start()
                 return result
         if path == "/schedules" and method == "GET":

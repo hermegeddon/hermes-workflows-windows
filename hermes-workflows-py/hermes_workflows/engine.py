@@ -256,6 +256,104 @@ class Engine:
         self.reconcile_external()
         return state
 
+    def resume(self, run_id: str, workflow: dict, *, node=None, reset_all=False) -> dict:
+        """Resume a failed node under the live spec, retaining settled history.
+
+        Python records executor failures as completed/outcome=failure. Its final
+        run settlement also skips unfinished descendants; reopen those alongside
+        the failed node so their prior synthetic skip cannot strand the resume.
+        """
+        require_valid(workflow)
+        if type(reset_all) is not bool:
+            raise ValueError("all must be boolean")
+        if node is not None and (not isinstance(node, str) or not node.strip()):
+            raise ValueError("node must be a non-empty string")
+        if reset_all and node is not None:
+            raise ValueError("node and all are mutually exclusive")
+        if not workflow.get("enabled", True):
+            raise ConflictError("workflow is disabled")
+        config = settings_module.values(self.db)
+        if any(n["type"] == "script" for n in workflow["nodes"]) and not config["scripts_enabled"]:
+            raise ConflictError("script execution is disabled")
+        snapshot, old_spec, revision = self.db.execution(run_id)
+        if workflow["id"] != snapshot["workflow_id"]:
+            raise ValueError("resume workflow id must match the run")
+        live_types = {n["id"]: n["type"] for n in workflow["nodes"]}
+        stored_types = {key: value.get("node_type") for key, value in snapshot["nodes"].items()}
+        if set(stored_types) != set(live_types) or any(
+            kind is not None and live_types[key] != kind for key, kind in stored_types.items()
+        ):
+            raise ConflictError("spec drift: live workflow node ids or types changed; start a new run")
+
+        def failed(key, state):
+            return state["status"] == "failed" or (
+                state["status"] == "completed"
+                and state.get("outcome") == "failure"
+                and live_types[key] in ("agent_task", "script", "wait")
+            )
+
+        def change(run):
+            if run["status"] in ACTIVE:
+                raise ConflictError(f"run is {run['status']}, not resumable; it is still active")
+            target = node
+            if not reset_all and target is None:
+                failures = sorted(key for key, value in run["nodes"].items() if failed(key, value))
+                if not failures:
+                    raise ConflictError("run has no failed node to resume; use --all to restart")
+                if len(failures) != 1:
+                    raise ConflictError(
+                        f"run has multiple failed nodes {failures}; choose --node or --all"
+                    )
+                target = failures[0]
+            if not reset_all:
+                if target not in run["nodes"]:
+                    raise ValueError(f"unknown node '{target}'")
+                if not failed(target, run["nodes"][target]):
+                    raise ConflictError(f"node '{target}' is not failed")
+            targets = set(live_types) if reset_all else {target}
+            if not reset_all:
+                downstream = {target}
+                edges = old_spec["edges"] + workflow["edges"]
+                while True:
+                    expanded = downstream | {e["to"] for e in edges if e["from"] in downstream}
+                    if expanded == downstream:
+                        break
+                    downstream = expanded
+                targets |= {
+                    key for key in downstream if run["nodes"][key]["status"] in ("skipped", "cancelled")
+                }
+            for raw in workflow["nodes"]:
+                if raw["id"] in targets:
+                    iteration = run["nodes"][raw["id"]].get("iteration", 0)
+                    run["nodes"][raw["id"]] = {**_initial_node(raw), "iteration": iteration}
+            run.update(
+                status="created" if reset_all else "running",
+                finished_at=None,
+                workflow_version=workflow["version"],
+            )
+            run.pop("error", None)
+            run.pop("finish_outcome", None)
+            if reset_all:
+                run["loop_reentries"] = 0
+
+        def guard(con, run):
+            if run["status"] not in ACTIVE and con.execute(
+                "SELECT count(*) FROM py_runs WHERE status IN ('created','running','waiting')"
+            ).fetchone()[0] >= config["max_parallel_runs"]:
+                raise ConflictError("active run limit reached")
+
+        state = self.db.mutate_run(
+            run_id,
+            change,
+            spec=workflow,
+            revision=revision,
+            guard=guard,
+            invalidate=True,
+            event={"type": "run_resumed", "node_id": node, "all": reset_all},
+        )
+        self.reconcile_external()
+        return state
+
     @staticmethod
     def _next_seq(run):
         value = (
@@ -440,11 +538,14 @@ class Engine:
             self._finish(run, "failure" if failed else "success")
         return ready_work
 
-    async def drive(self, run_id: str, owner: str):
+    async def drive(self, run_id: str, owner: str, *, checkpoint=False):
         _, workflow, revision = self.db.execution(run_id, owner=owner)
         active: dict[str, asyncio.Task] = {}
         last_heartbeat = time.monotonic()
+        inline_batches = 0
+        batch_scripts_only = True
         try:
+            inline = settings_module.values(self.db)["default_mode"] == "direct"
             EffectStore(self.db).recover(run_id, owner=owner, revision=revision)
             resuming = []
 
@@ -478,6 +579,7 @@ class Engine:
             if recovered["status"] in TERMINAL:
                 return
             for name in resuming:
+                batch_scripts_only = False
                 node = next(n for n in workflow["nodes"] if n["id"] == name)
                 active[name] = asyncio.create_task(
                     self._execute(
@@ -504,6 +606,9 @@ class Engine:
                 if state["status"] in TERMINAL:
                     break
                 limit = settings_module.values(self.db)["max_parallel_steps"]
+                if checkpoint and inline and inline_batches >= 64:
+                    ready = []  # Drain existing tasks before returning the lease.
+                scheduled = False
                 for name in ready[: max(0, limit - len(active))]:
                     if name in active:
                         continue
@@ -537,10 +642,14 @@ class Engine:
                     if state["status"] in TERMINAL:
                         break
                     node = next(n for n in workflow["nodes"] if n["id"] == name)
+                    batch_scripts_only = batch_scripts_only and node["type"] == "script"
                     attempt_id = state["nodes"][name]["attempt_id"]
                     active[name] = asyncio.create_task(
                         self._execute(run_id, owner, node, workflow, revision, attempt_id)
                     )
+                    scheduled = True
+                if scheduled:
+                    inline_batches += 1
                 if state["status"] == "waiting" and not active:
                     break
                 if active:
@@ -550,6 +659,16 @@ class Engine:
                     for task in done:
                         task.result()
                     active = {name: task for name, task in active.items() if not task.done()}
+                    if done and not active:
+                        # Every settled node is already persisted. Durable mode
+                        # returns the lease after a batch; direct mode drains
+                        # script-only batches before giving the supervisor its
+                        # next checkpoint. Bound cycles without delaying workers.
+                        if checkpoint and (
+                            not inline or not batch_scripts_only or inline_batches >= 64
+                        ):
+                            return
+                        batch_scripts_only = True
                 else:
                     await asyncio.sleep(0.05)
         finally:

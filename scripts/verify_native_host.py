@@ -76,7 +76,7 @@ def host_contract(plugin: Path) -> dict:
             ).get_runtime
             runtime = get_runtime(home)
             assert runtime.thread.is_alive()
-            assert len(manager._plugin_tool_names) == 5
+            assert len(manager._plugin_tool_names) == 6
             assert "workflow" in manager._plugin_commands
             # Use native dashboard discovery and route mounting. Authentication
             # alone is overridden in this isolated, in-memory test application.
@@ -236,6 +236,100 @@ def host_contract(plugin: Path) -> dict:
                     assert response.status_code == 200, response.text
                     await wait_loop(lambda run: run["status"] == "completed")
 
+                    # Exercise resume through the real directory-loaded router
+                    # with a capture-only agent callback and a terminal fixture.
+                    resumable = {
+                        "id": "native-resume",
+                        "name": "Native resume",
+                        "version": 1,
+                        "scope": {"type": "global"},
+                        "trigger": {"type": "manual"},
+                        "defaults": {"profile": "capture-only"},
+                        "nodes": [
+                            {"id": "prefix", "type": "condition"},
+                            {"id": "work", "type": "agent_task", "prompt": "capture only"},
+                            {"id": "done", "type": "finish"},
+                        ],
+                        "edges": [{"from": "prefix", "to": "work"}, {"from": "work", "to": "done"}],
+                    }
+                    response = await client.post(base + "/workflows", json={"workflow": resumable})
+                    assert response.status_code == 200, response.text
+                    state = {
+                        "run_id": "native-resume-run",
+                        "workflow_id": resumable["id"],
+                        "workflow_version": 1,
+                        "status": "failed",
+                        "started_at": time.time(),
+                        "finished_at": time.time(),
+                        "params": {},
+                        "nodes": {
+                            "prefix": {
+                                "node_id": "prefix",
+                                "node_type": "condition",
+                                "status": "completed",
+                                "outcome": "success",
+                                "output": "preserved",
+                                "seq": 1,
+                            },
+                            "work": {
+                                "node_id": "work",
+                                "node_type": "agent_task",
+                                "status": "completed",
+                                "outcome": "failure",
+                                "seq": 2,
+                            },
+                            "done": {
+                                "node_id": "done",
+                                "node_type": "finish",
+                                "status": "skipped",
+                                "seq": 3,
+                            },
+                        },
+                    }
+                    before = runtime.db.create_run(state, resumable)
+                    result_class = importlib.import_module(
+                        entry_module.register.__module__ + ".executor"
+                    ).Result
+
+                    async def capture_only(node, run):
+                        return result_class(output="native resume capture")
+
+                    previous_runner = runtime.engine.executor.agent_runner
+                    runtime.engine.executor.agent_runner = capture_only
+                    try:
+                        response = await client.post(
+                            base + "/runs/native-resume-run/resume", json={}
+                        )
+                        assert response.status_code == 200, response.text
+                        deadline = time.monotonic() + 15
+                        while time.monotonic() < deadline:
+                            response = await client.get(base + "/runs/native-resume-run")
+                            assert response.status_code == 200, response.text
+                            if response.json()["status"] == "completed":
+                                break
+                            await asyncio.sleep(0.03)
+                        else:
+                            raise AssertionError(response.text)
+                        assert response.json()["nodes"]["prefix"] == before["nodes"]["prefix"]
+                        assert response.json()["nodes"]["work"]["output"] == "native resume capture"
+                        response = await client.post(
+                            base + "/runs/native-resume-run/resume", json={}
+                        )
+                        assert response.status_code == 409, response.text
+                        response = await client.put(
+                            base + "/settings", json={"default_mode": "direct"}
+                        )
+                        assert response.status_code == 200, response.text
+                        response = await client.post(
+                            base + "/workflows/native-resume/compile-preview", json={}
+                        )
+                        assert response.json()["execution"] == {
+                            "mode": "direct",
+                            "inline_scripts": True,
+                        }, response.text
+                    finally:
+                        runtime.engine.executor.agent_runner = previous_runner
+
             asyncio.run(check_routes())
             manager.unload(manifest_key(manifest))
             assert not runtime.thread.is_alive()
@@ -247,6 +341,7 @@ def host_contract(plugin: Path) -> dict:
                 "native_dashboard_mount": "passed",
                 "dashboard_run_review": "passed",
                 "dashboard_loop_review": "passed",
+                "dashboard_resume_and_mode": "passed",
                 "dashboard_worker_observation_routes": "passed",
             }
         finally:

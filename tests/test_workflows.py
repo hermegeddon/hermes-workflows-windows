@@ -887,6 +887,7 @@ class PureTests(unittest.TestCase):
                 "workflow_status",
                 "workflow_explain",
                 "workflow_review",
+                "workflow_resume",
             },
         )
         self.assertEqual(context.commands[0][0][0], "workflow")

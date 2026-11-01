@@ -52,8 +52,8 @@ Local implementation evidence is in
 | Prompt nodes and ancestor input references | Implemented for DAGs/cycles with runtime channel-availability checks and single-pass named mapping substitution; unavailable current-iteration values fail rather than becoming empty text | `specs.resolve`, `Engine._execute`, loop input fixtures; hwp-6pu.5 |
 | Human review through API, tool, CLI, web and Desktop | Implemented with allowed decisions, notes and immutable run-spec review options; maintained web/Desktop clients fence requests with attempt IDs and handle fast re-entry/late acknowledgements | Review loop/restart/stale-token tests. Re-entry clears old decisions instead of retaining the pinned upstream value; hwp-6pu.5 |
 | Chat reply review routing | Implemented for newly origin/session-bound runs: unique gate selection, native admission/control ownership, explicit decisions or free-text picks, transactional replay receipts and attempt/quote/time fences. Windows Discord channel acceptance passed | U6; `gate_reply.py`, frozen interpretation fixtures, native capture-only hook verifier and hwp-6pu.32. Real thread/remote checks remain in the final matrix |
-| Worker-free PR wait | Partial: full GitHub PR URL, open/merged/closed handling, token and timeout work; numeric/contextual PR lookup is absent | `Executor._wait`; U1 and upstream `wait.py`; hwp-6pu.15 |
-| Single-flight, cancel and retry | Implemented with leases and explicit node/full retry; external native work and upstream `resume` default-selection semantics remain partial | `db.py`, `Engine.retry`, `cli.py`; U3; hwp-6pu.4, hwp-6pu.15 |
+| Worker-free PR wait | URLs, numeric and branch/contextual references use bounded `gh` argv execution with the node workdir; open/transient failures remain pending. Full URLs retain the stdlib REST fallback without gh | `Executor._github_wait`, pinned state fixtures and Unicode subprocess checks; U1 and upstream `wait.py`; hwp-6pu.15; live acceptance pending |
+| Single-flight, cancel, retry and resume | Existing retry behavior retained; separate resume selects one failed executable node or explicit node/all under the live spec, preserves completed prefix/history and enforces active/sibling/capacity/revision guards | `db.py`, `Engine.resume`, API/CLI/slash/tool surfaces, pinned decisions and native-card/loop tests; U3; hwp-6pu.4/.15; live acceptance pending |
 | Cron and schedule actions | Profile-scoped native `workflow:<id>` jobs with Python triggers, native-view edits, pause/resume/run-now, durable handoff and explicit standalone mode implemented. Resident async supervision replaces upstream's transient advance-tick job | `native_schedules.py`, `schedules.py`, schema-5 authority guard, concurrency/recovery tests and installed-native Windows runner verification; Windows web/Desktop upgrade acceptance passed; U5; hwp-6pu.14 |
 | Event trigger declarations | Declared and validated. Automatic webhook/GitHub/API-event-to-run wiring is absent in both pinned upstream and this backend | U1 explicitly defers host event firing. Preserve declarations in hwp-6pu.5; actual event firing is an extension, not missing pinned parity |
 | Kanban lifecycle advance | Python supervisor polls owned cards and native final run summaries, resumes the same attempt on restart, and reconciles terminal/superseded card cleanup. Blocked cards wait up to the persisted node deadline; lifecycle hooks are not required for progress | U5; `KanbanExecutor`, native/isolated tests; hwp-6pu.6. No POSIX detached commands |
@@ -62,8 +62,8 @@ Local implementation evidence is in
 | Telemetry and dangerous-command approvals | Live direct/native worker hooks, per-card stream replacement, adopted-card aggregation and persisted attempt snapshots implemented. Direct dashboard prompts require opt-in; native finite-job policies remain host-owned and prompts without an explicitly selected supported transport remain read-only | `telemetry.py`, `observer.py`, worker callbacks, API and web/Desktop controls; pinned reference, cross-process and installed-native capture tests. Windows web/Desktop decisions and final native completion counters passed; U8; hwp-6pu.12 |
 | Traces and log export | Redacted JSONL lifecycle, notification marker, worker and approval events with attempt/revision extensions implemented; canonical rows are transactional SQLite rather than separate worker trace files. Exports include attempt history | Schema 4, `trace.py`, `redact.py`, `test_telemetry.py`, reference fixtures and delivery trace tests; live redaction, history equality, cancellation and stale-decision rejection passed; U8; hwp-6pu.12 |
 | Portable template export | Partial cached snapshot plus generic adaptation guide; structured de-binding, placeholder inventory and composite provenance/model cache are missing | `api.py` export-template; U9; hwp-6pu.13 |
-| Settings | Complete pinned schema with honest enforcement flags; scoped partial config writes and config/legacy SQLite/env/default precedence. Existing Python defaults preserved; unenforced memory/mode/path/tick knobs are explicitly labelled | `settings.py`, pinned settings reference, concurrent-writer/read-only/profile tests and installed-native config checks; Windows web/Desktop upgrade acceptance passed; U10; hwp-6pu.14 |
-| Compile preview, API and command compatibility | Dashboard routes are implemented; plan content includes board routing and adoption fields. Upstream CLI/tool verbs such as `resume` differ | `specs.compile_preview`, `api.py`, `cli.py`, `__init__.py`; U10; hwp-6pu.5/.6/.7/.13/.14/.15 |
+| Settings | Complete pinned schema with honest enforcement flags; scoped partial config writes and config/legacy SQLite/env/default precedence. Existing Python defaults preserved; default_mode controls resident batch checkpoints; unenforced memory/path/tick knobs are labelled | `settings.py`, pinned settings reference, concurrent-writer/read-only/profile tests and installed-native config checks; Windows web/Desktop settings upgrade passed; new mode live acceptance pending; U10; hwp-6pu.14/.15 |
+| Compile preview, API and command compatibility | Plans report actual executor/mode and inherited model/retries. Resume, NL workflow selection, CLI project/params/origin aliases and scoped maintenance advances implemented; existing JSON slash envelopes and retry semantics retained. Template-export CLI parity belongs to the template milestone | `specs.compile_preview`, `api.py`, `cli.py`, `commands.py`, `command-reference.json`; U10; hwp-6pu.5/.6/.7/.13/.14/.15; new controls live acceptance pending |
 | Web and native Desktop integration | Implemented and live-tested on Windows default/named profiles and remote macOS review workflows | `frontend/src/desktop`, SDK owner/stale-request tests; each feature must include relevant UI coverage, final gate hwp-6pu.16 |
 
 ## Execution and integration decisions
@@ -585,6 +585,59 @@ each of parallel adoption and isolated worker startup passed under bounded
 same-database SQLite writer contention. This did not reproduce the historical
 six/eight-second timing failure, so **hwp-6pu.34** remains open. The load evidence
 is in `.cache/release-checks/startup-load.json`.
+
+Resume/command implementation adds a separate operator control while retaining
+Python retry compatibility. Bare resume requires exactly one failed executable
+node; explicit node/all targets, active status, sibling runs, run capacity and
+execution revision are checked before mutation. Stored input/origin/params,
+settled prefix and old attempt handles survive. Python executor failures stored
+as `completed/outcome=failure` count as failed targets; synthetic skipped or
+cancelled descendants reopen with that target. Routing/finish negative outcomes
+are not failed executable targets. Node-id/type drift is refused; edge-only
+edits follow the pinned resume guard, while legacy retry retains its stricter
+edge-pair guard. Native-card and loop fixtures verify fresh handles/reviews and
+stale-attempt refusal.
+
+Pinned Python AST capture freezes resume selection/drift, longest-name workflow
+selection, run argument parsing, CLI defaults, inline-mode eligibility and PR
+states without running Bun. The model-visible `workflow_resume` tool is an
+additive extension to upstream's five tools. Existing slash JSON responses and
+literal Windows backslashes remain deliberate compatibility choices. The
+resident engine implements durable mode by returning the lease after a settled
+batch, and direct mode by draining at most 64 scheduled script batches before a
+checkpoint, including when parallel scripts remain active. Both preserve
+asynchronous workers and persisted step state. Standalone run/review/resume and
+maintenance advances keep their owning process alive until settlement or a
+review; `advance-run` does not start sibling runs or a profile-wide scheduler.
+No transient advance-tick job or POSIX detachment is required.
+
+The installed-native loader/router probe includes capture-only resume and mode
+checks. The final 231-test suites passed on Python 3.11 and managed 3.14 (one
+and four optional dependency skips); lint, eight asset hashes, four loader checks
+and byte-identical reference regeneration passed. Native telemetry and real
+Windows Python cron probes passed after the supervisor change. A read-only
+GitHub probe resolved merged upstream PR 35 by both URL and number from a
+temporary Unicode repository path. Evidence is under
+`.cache/release-checks/resume-*`.
+Live Windows acceptance passed on 2026-11-01 after gateway restart. Its QA-bound
+plugin inventory reported six tools and no load error. A real `/workflow run`
+failed its second cmd script; after a content-only repair, bare `/workflow resume`
+kept the first node and attempt unchanged, retained input and parameters including
+a Unicode Windows path, and created a fresh work attempt and review. Web approval
+completed it. Desktop saved direct mode and web independently read that value;
+an explicit `resume --all` then ran both scripts and completed through Desktop
+review. Completed-without-failure and active-review resume requests were refused.
+The final history retained two prefix attempts, three work attempts, and two
+review/finish attempts each, including the original failure and Desktop note.
+The disposable workflow was disabled, QA config restored byte-for-byte, and
+existing QA/default run and attempt rows, default config, QA `.env`, and legacy
+SQLite settings were unchanged. An idle QA plugin reload retained all history
+and restored scripts-disabled/durable settings. Evidence is in
+`.cache/dashboard-check/resume-live/`, with web/Desktop completion screenshots
+beside it. The host occasionally delayed plugin-host responses and a gateway
+WebSocket handshake during these checks; both recovered without changing
+deadlines. This does not resolve the separately tracked host-latency release
+gate **hwp-6pu.34**. Hosted CI must also pass after publication.
 
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner

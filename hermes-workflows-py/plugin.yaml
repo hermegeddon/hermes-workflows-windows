@@ -17,3 +17,4 @@ provides_tools:
   - workflow_status
   - workflow_explain
   - workflow_review
+  - workflow_resume

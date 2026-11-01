@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 from functools import partial
 
 __version__ = "1.0.2"
@@ -49,6 +48,10 @@ TOOL_SCHEMAS = {
         },
         ("run_id", "node_id", "decision"),
     ),
+    "workflow_resume": _object(
+        {"run_id": _string(), "node": _string(), "all": {"type": "boolean"}},
+        ("run_id",),
+    ),
 }
 
 
@@ -56,7 +59,9 @@ def _tool(name, args, home=None, *, task_id=None):
     from .api import API, BASE
     from .runtime import get_runtime
 
-    args = args or {}
+    args = {} if args is None else args
+    if not isinstance(args, dict):
+        raise ValueError("tool arguments must be an object")
     runtime = get_runtime(home)
     api = API(
         runtime,
@@ -81,6 +86,11 @@ def _tool(name, args, home=None, *, task_id=None):
             BASE + f"/runs/{args['run_id']}/review",
             {k: v for k, v in args.items() if k != "run_id"},
         )
+    if name == "workflow_resume":
+        return api.handle(
+            "POST", BASE + f"/runs/{args['run_id']}/resume",
+            {k: v for k, v in args.items() if k != "run_id"},
+        )
     raise ValueError("unknown workflow tool")
 
 
@@ -91,7 +101,7 @@ def _handler(name, home=None):
             if status >= 400:
                 result = {"error": result["detail"], "status_code": status}
             return json.dumps(result, ensure_ascii=False)
-        except (KeyError, ValueError) as exc:
+        except (KeyError, ValueError, RuntimeError, OSError) as exc:
             return json.dumps({"error": str(exc)})
 
     return handle
@@ -99,45 +109,61 @@ def _handler(name, home=None):
 
 def _command(raw_args="", *, home=None, **_kwargs):
     from .api import API
+    from .commands import parse_resume_args, parse_run_args, resolve_nl_command, tokenize
     from .runtime import get_runtime
 
-    usage = "Usage: /workflow list | run <id> [project] [name=value ...] [--input text] | status <run> | review <run> <node> <approved|rejected|needs_changes> [note] | cancel <run> | explain <id>"
+    usage = "Usage: /workflow list | run <id> [project] [name=value ...] [--input text] | status <run> | review <run> <node> <approved|rejected|needs_changes> [note] | resume <run> [--node <id>|--all] | retry <run> [--node-id <id>] | cancel <run> | explain <id>"
     try:
-        lexer = shlex.shlex(raw_args, posix=True)
-        lexer.whitespace_split = True
-        lexer.escape = ""  # Preserve native Windows paths.
-        parts = list(lexer)
-        if not parts:
+        parts = tokenize(raw_args)
+        if not parts or parts[0] in ("help", "-h", "--help"):
             return usage
         sub, tail = parts[0], parts[1:]
+        if sub not in ("list", "run", "explain", "status", "review", "cancel", "resume", "retry"):
+            status, catalog = _tool("workflow_list", {}, home)
+            if status >= 400:
+                return json.dumps(catalog, ensure_ascii=False)
+            resolved = resolve_nl_command(raw_args, catalog["workflows"])
+            if "question" in resolved:
+                return resolved["question"]
+            _, result = _tool(
+                "workflow_run", resolved, home,
+                task_id=_kwargs.get("task_id") or _kwargs.get("session_key"),
+            )
+            return json.dumps(result, ensure_ascii=False)
         args = {}
         if sub in ("run", "explain"):
             args["workflow_id"] = tail.pop(0)
-        elif sub in ("status", "review", "cancel"):
+        elif sub in ("status", "review", "cancel", "resume", "retry"):
             args["run_id"] = tail.pop(0)
         if sub == "run":
             if "--input" in tail:
                 index = tail.index("--input")
                 args["input"] = " ".join(tail[index + 1 :])
                 tail = tail[:index]
-            params = {}
-            for value in tail:
-                if "=" in value:
-                    key, val = value.split("=", 1)
-                    params[key] = val
-                elif "project_id" not in args:
-                    args["project_id"] = value
-                else:
-                    raise ValueError("unexpected argument; use name=value for parameters")
+            project, params = parse_run_args(tail)
+            if project is not None:
+                args["project_id"] = project
             if params:
                 args["params"] = params
+        if sub in ("resume", "retry"):
+            node, reset_all = parse_resume_args(tail)
+            if sub == "resume":
+                args.update(all=reset_all)
+                if node is not None:
+                    args["node"] = node
+            else:
+                payload = {"node_id": node} if node is not None else {}
+                _, result = API(get_runtime(home)).handle("POST", f"/runs/{args['run_id']}/retry", payload)
+                return json.dumps(result, ensure_ascii=False)
+        if sub in ("list", "status", "cancel", "explain") and tail:
+            raise ValueError("unexpected argument")
         if sub == "review":
             args.update(node_id=tail[0], decision=tail[1])
             if len(tail) > 2:
                 args["note"] = " ".join(tail[2:])
         if sub == "cancel":
             status, result = API(get_runtime(home)).handle("POST", f"/runs/{args['run_id']}/cancel")
-        elif sub in ("list", "run", "status", "review", "explain"):
+        elif sub in ("list", "run", "status", "review", "explain", "resume"):
             status, result = _tool(
                 "workflow_" + sub,
                 args,
@@ -147,12 +173,12 @@ def _command(raw_args="", *, home=None, **_kwargs):
         else:
             return usage
         return json.dumps(result, ensure_ascii=False)
-    except (IndexError, ValueError, KeyError) as exc:
-        return f"{exc}\n{usage}"
+    except (IndexError, ValueError, KeyError, RuntimeError, OSError) as exc:
+        return f"workflow command failed: {exc}\n{usage}"
 
 
 def register(ctx):
-    """Register the same model-visible tools and slash command as upstream.
+    """Register compatible workflow tools plus explicit resume control.
 
     Dashboard routes use dashboard/plugin_api.py, the standard Hermes plugin
     handler convention. Hosts that disable third-party router loading can proxy
@@ -185,6 +211,7 @@ def register(ctx):
         "workflow_status": "Get full workflow run state, including per-node outcomes.",
         "workflow_explain": "Preview a workflow's steps without running it.",
         "workflow_review": "Resolve a waiting human review gate and advance the run. Pass its attempt_id from workflow_status to fence the decision to that iteration.",
+        "workflow_resume": "Resume the single failed node under the live workflow, preserving completed work. Choose node explicitly when failures are ambiguous, or all for a full restart.",
     }
     for name, schema in TOOL_SCHEMAS.items():
         ctx.register_tool(
@@ -200,5 +227,5 @@ def register(ctx):
             "workflow",
             partial(_command, home=home),
             description="Run and manage workflows.",
-            args_hint="list | run <id> | status <run> | review <run> <node> <decision> | cancel <run>",
+            args_hint="list | run <id> | status <run> | review <run> <node> <decision> | resume <run> [--node <id>|--all] | cancel <run>",
         )

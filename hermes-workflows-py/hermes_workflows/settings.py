@@ -156,7 +156,7 @@ SCHEMA["groups"][1]["fields"].extend(
             "type": "enum",
             "options": ["durable", "direct"],
             "default": "durable",
-            "enforced": False,
+            "enforced": True,
         },
         {"key": "event_debounce_seconds", "type": "int", "default": 2, "enforced": False},
         {"key": "tick_schedule", "type": "string", "default": "every 2m", "enforced": False},

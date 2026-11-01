@@ -40,8 +40,8 @@ installation method.
 ## Connect the existing dashboard
 
 Hermes loads `register(ctx)` through the root `__init__.py`. This registers
-`workflow_list`, `workflow_run`, `workflow_status`, `workflow_explain`, and
-`workflow_review`, plus the `/workflow` slash command. Registration starts the
+`workflow_list`, `workflow_run`, `workflow_status`, `workflow_explain`,
+`workflow_review`, and `workflow_resume`, plus the `/workflow` slash command. Registration starts the
 workflow supervisor immediately, reconciles schedules, and recovers expired run
 leases without waiting for the first tool call. Agent/provider imports remain
 lazy. Hosts with `ctx.on_unload` stop the supervisor and its workers on plugin
@@ -266,6 +266,36 @@ an explicit retry. External wait nodes resume polling with their original timeou
 deadline. Retrying uses the live workflow configuration and rejects structural
 graph changes; a selected node retry also resets its descendants.
 
+`resume` is a separate operation. Bare `resume <run>` selects the single failed
+executable node; `--node <id>` selects a failed node explicitly, and `--all`
+restarts the graph. Active runs, ambiguous failures, changed node ids/types,
+disabled scripts, active siblings and exhausted run capacity are refused without
+changing history. The completed prefix, input, parameters and origin remain;
+new attempts use the live prompt/config. Python's synthetic skipped/cancelled
+descendants reopen with the target. The existing `retry` operation retains its
+full-restart default, descendant reset and stricter edge-change guard.
+
+The API exposes `POST /runs/{id}/resume` with `{node?, all?}` (`node_id` is an
+alias). The CLI and slash command accept `resume <run> [--node <id>|--all]`;
+`workflow_resume` exposes the same control to the model. Slash responses retain
+the existing JSON format. `/workflow <id-or-name> <instructions>` resolves the
+longest known leading name and asks when targets are ambiguous. Windows
+backslashes remain literal inside quoted parameters. The CLI also supports
+`--project`, `--params '<JSON object>'`, `--origin`, and `explain <workflow>`.
+`advance-run <run>` drives only that existing run, respecting another owner's
+lease. `advance-all` drives the current active set concurrently and returns the
+`advanced`, `dispatched`, and `active` envelope. These commands keep their owning
+process alive until work settles or parks for review; they do not start a
+profile-wide scheduler or dispatch native board workers themselves.
+
+`default_mode=durable` returns the supervisor lease after each settled batch.
+`direct` drains script-only batches under that lease, with a 64-batch bound;
+agent and Kanban work retain asynchronous execution. Every step still persists
+its result and attempts. Both modes use the resident Python supervisor, so CLI
+run/review/resume commands keep it alive until completion or a review gate.
+This replaces upstream's tick-driven process lifetime. Compile preview reports
+the configured mode and each agent's actual direct/Kanban executor.
+
 `scheduler_backend` selects `auto` (default), `native`, or `standalone`. Auto uses
 Hermes cron when the required profile-scoped APIs are available; otherwise new
 schedules use the Python scheduler. Once a schedule has native authority, losing
@@ -302,7 +332,7 @@ All paths below may be prefixed with `/api/plugins/hermes-workflows`.
 | Workflow actions | `PUT /workflows/{id}/enabled`, `POST .../validate`, `POST .../compile-preview`, `POST .../run` |
 | Workflow downloads | `GET /workflows/{id}/export`, `GET .../export-template` |
 | Runs | `GET /runs?scope=active\|all&workflow_id=...`, `GET /runs/{id}` |
-| Run actions | `POST /runs/{id}/review`, `POST .../cancel`, `POST .../retry`, `GET .../export` |
+| Run actions | `POST /runs/{id}/review`, `POST .../cancel`, `POST .../retry`, `POST .../resume`, `GET .../export` |
 | Schedules | `GET /schedules`, `PUT/DELETE /schedules/{id}`, `POST .../pause`, `POST .../resume`, `POST .../run` |
 | Settings/catalog | `GET/PUT /settings`, `GET /profiles`, `GET /o2b-status` |
 
@@ -657,9 +687,13 @@ OpenSecondBrain writes are not implemented. The O2B badge reports local
 installation/configuration only. Event triggers remain declarative, as upstream;
 an external system can start a run through the run route.
 
-`wait_for.github_pr_merged` accepts a full GitHub PR URL, with `GH_TOKEN` or
-`GITHUB_TOKEN` available for private repositories. Numeric-only PR references
-need conversion to URLs. Template export produces a cached offline spec and
+`wait_for.github_pr_merged` accepts a PR URL, number or branch reference through
+the optional `gh` CLI, using the node's working directory for repository context.
+Open PRs and transient lookup/auth/network errors keep waiting within the node's
+original deadline; merged PRs succeed and closed unmerged PRs fail. Without `gh`,
+full GitHub URLs retain the standard-library REST path, with `GH_TOKEN` or
+`GITHUB_TOKEN` available for private repositories. Contextual references then
+keep waiting until `gh` is available or the deadline expires. Template export produces a cached offline spec and
 adaptation guide; it does not call an LLM to de-bind installation-specific values.
 With Hermes installed, edited settings are persisted through its scoped config
 API under `plugins.workflows`, using partial merges that preserve unrelated
@@ -668,7 +702,7 @@ legacy SQLite values, named environment override, then default. Unedited legacy
 values remain a compatibility fallback; saving another field never copies them
 over another host's newer choice. Without Hermes, standalone settings remain in
 SQLite. The complete pinned settings schema is exposed, with concrete storage
-defaults and honest `enforced` flags: memory writes, alternate execution modes,
+defaults and honest `enforced` flags: memory writes,
 path relocation and upstream tick/debounce knobs remain unenforced until their
 corresponding integrations exist. The Python engine keeps its continuous resident
 supervisor rather than creating upstream's transient advance-tick cron job.

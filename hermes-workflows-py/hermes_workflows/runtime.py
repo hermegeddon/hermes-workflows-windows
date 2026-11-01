@@ -128,7 +128,9 @@ class Runtime:
                     # clearing a replacement driver's lease in the same process.
                     owner = f"{self.owner}:{uuid.uuid4().hex}"
                     if self.db.claim(run_id, owner):
-                        tasks[run_id] = asyncio.create_task(self.engine.drive(run_id, owner))
+                        tasks[run_id] = asyncio.create_task(
+                            self.engine.drive(run_id, owner, checkpoint=True)
+                        )
                 if time.monotonic() - last_schedules >= 1:
                     try:
                         await asyncio.to_thread(self.tick_schedules)

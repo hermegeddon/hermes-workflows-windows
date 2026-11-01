@@ -194,9 +194,10 @@ class SettingsSchedulesTests(unittest.TestCase):
             if "options" in expected:
                 self.assertEqual(fields[key]["options"], expected["options"], key)
         self.assertEqual(fields["runs_db_path"]["default"], str(self.db.path))
-        for key in ("mode", "write_node_events", "internal_board", "tick_schedule", "default_mode"):
+        for key in ("mode", "write_node_events", "internal_board", "tick_schedule"):
             self.assertFalse(fields[key]["enforced"])
         self.assertTrue(fields["scheduler_backend"]["enforced"])
+        self.assertTrue(fields["default_mode"]["enforced"])
         for invalid in (
             {"max_parallel_runs": True},
             {"max_parallel_runs": 129},

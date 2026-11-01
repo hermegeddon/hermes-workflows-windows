@@ -359,14 +359,39 @@ class Executor:
     @staticmethod
     async def _github_wait(node: dict) -> Result | None:
         import re
+        import urllib.error
         import urllib.request
 
-        ref = node["wait_for"]["github_pr_merged"]
-        match = re.search(
-            r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)", ref
+        ref = node["wait_for"]["github_pr_merged"].strip()
+        if not ref or ref.startswith("-") or any(c in ref for c in "\x00\r\n"):
+            raise ValueError("github_pr_merged requires a PR URL, number or branch reference")
+        gh = shutil.which("gh")
+        if gh:
+            try:
+                response = await run_process(
+                    [gh, "pr", "view", ref, "--json", "state"],
+                    cwd=node.get("workdir"), env=dict(os.environ), timeout=30,
+                )
+            except OSError:
+                return None
+            if response.outcome != "success":
+                return None
+            try:
+                state = json.loads(response.output).get("state")
+            except (ValueError, AttributeError):
+                return None
+            if state == "MERGED":
+                return Result(output=ref)
+            if state == "CLOSED":
+                return Result("failure", ref, "pull request closed without merging")
+            return None
+        # Keep the original stdlib-only URL path usable without the optional
+        # GitHub CLI. Contextual references require gh's repository discovery.
+        match = re.fullmatch(
+            r"https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/pull/(\d+)/?", ref
         )
         if not match:
-            raise ValueError("github_pr_merged requires a full GitHub PR URL")
+            return None
         owner, repo, number = match.groups()
 
         def fetch():
@@ -382,7 +407,12 @@ class Executor:
             ) as response:
                 return json.load(response)
 
-        data = await asyncio.to_thread(fetch)
+        try:
+            data = await asyncio.to_thread(fetch)
+        except (OSError, ValueError, urllib.error.URLError):
+            return None
+        if not isinstance(data, dict):
+            return None
         if data.get("merged"):
             return Result(output=ref)
         if data.get("state") == "closed":

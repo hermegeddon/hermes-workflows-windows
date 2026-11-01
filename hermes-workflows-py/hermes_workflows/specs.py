@@ -211,6 +211,7 @@ def validate(workflow: dict) -> dict:
                 not isinstance(wait, dict)
                 or set(wait) != {"github_pr_merged"}
                 or not isinstance(wait.get("github_pr_merged"), str)
+                or not wait.get("github_pr_merged", "").strip()
             ):
                 err("invalid_wait", f"'{name}' requires wait_for.github_pr_merged")
         mapping = node.get("input_mapping", {})
@@ -549,8 +550,13 @@ class SpecStore:
             Path(self.get(workflow_id)["path"]).unlink()
 
 
-def compile_preview(workflow: dict) -> dict:
+def compile_preview(workflow: dict, *, mode="durable", project_id=None) -> dict:
     require_valid(workflow)
+    from .kanban import board_for, on_board
+
+    if mode not in ("durable", "direct"):
+        raise ValueError("mode must be durable or direct")
+    board = board_for(workflow, project_id)
     defaults = workflow.get("defaults", {})
     tasks = []
     for n in workflow["nodes"]:
@@ -559,13 +565,15 @@ def compile_preview(workflow: dict) -> dict:
                 {
                     "node": n["id"],
                     "kind": "agent",
+                    "executor": "kanban" if on_board(n, board) else "direct",
                     "assignee": n.get("profile", defaults.get("profile", "")),
                     "workflow_template_id": workflow["id"],
                     "current_step_key": n["id"],
                     "prompt": n["prompt"],
+                    **{k: defaults[k] for k in ("model", "max_retries") if k in defaults and k not in n},
                     **(
                         {"off_board": True}
-                        if workflow["scope"]["type"] == "global" or n.get("board") is False
+                        if not on_board(n, board)
                         else {}
                     ),
                     **{
@@ -576,6 +584,7 @@ def compile_preview(workflow: dict) -> dict:
                             "skills",
                             "workdir",
                             "timeout_seconds",
+                            "max_retries",
                             "input_mapping",
                             "adopt",
                             "task_ref",
@@ -597,11 +606,13 @@ def compile_preview(workflow: dict) -> dict:
         "scope": workflow["scope"],
         "trigger": trigger,
         "first_node": roots[0],
+        "execution": {"mode": mode, "inline_scripts": mode == "direct"},
         "kanban_tasks": tasks,
         "script_steps": [
             {
                 "node": n["id"],
                 "kind": "script",
+                "executor": "script",
                 **{k: v for k, v in n.items() if k not in ("id", "type")},
             }
             for n in workflow["nodes"]
@@ -616,7 +627,7 @@ def compile_preview(workflow: dict) -> dict:
             {
                 "schedule": trigger["schedule"],
                 "timezone": trigger.get("timezone", "UTC"),
-                "command": f"workflow run {workflow['id']}",
+                "command": f"hermes-workflows run {workflow['id']}",
             }
         ]
         if trigger["type"] == "cron"
