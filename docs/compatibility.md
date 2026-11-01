@@ -567,6 +567,25 @@ passed. The hosted Windows short/long TEMP-path assertion was corrected locally;
 remote CI must verify that correction after publication. Linux live scheduling,
 remote owners and clean-install coverage remain in the final parity gate.
 
+The first pinned local Windows install/upgrade checkpoint also passed using only
+Git archives of `63f39cd` and `79a8c72`, with site packages disabled. A fresh copy
+in a Unicode path loaded its own backend and passed all eight asset hashes. An
+existing schema-4 waiting review run and explicit SQLite setting remained
+unchanged after updating the plugin copy to schema 5; approval then completed
+the original run. Both paths preserved the local config bytes. Evidence is in
+`.cache/release-checks/pinned-install.json`. This covers the copy installer and
+standalone runtime, not remote catalog installation or a clean native gateway.
+
+Release checks added elapsed-time, run/card/attempt and runtime-liveness evidence
+to readiness failures without increasing deadlines. An isolated probe found an
+independent fixture isolation defect: a partial fake Hermes checkout was exposed
+to parent imports, making native config discovery depend on test order. The
+worker fixtures now expose it only through child `PYTHONPATH`. Eight iterations
+each of parallel adoption and isolated worker startup passed under bounded
+same-database SQLite writer contention. This did not reproduce the historical
+six/eight-second timing failure, so **hwp-6pu.34** remains open. The load evidence
+is in `.cache/release-checks/startup-load.json`.
+
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner
 checks through both frontends. Ordinary CI uses temporary storage, stub native

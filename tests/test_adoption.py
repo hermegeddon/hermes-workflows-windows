@@ -114,6 +114,7 @@ class AdoptionTests(unittest.TestCase):
         self.board.create_board("demo")
         self.adapter = KanbanExecutor(self.db, self.board.host(), poll_seconds=0.01)
         self.adapter.adoption = AdoptionExecutor(self.adapter)
+        self.runtimes = []
 
     def runtime(self, output=""):
         async def collect(node, run):
@@ -121,17 +122,34 @@ class AdoptionTests(unittest.TestCase):
 
         runtime = Runtime(self.db, SpecStore([self.root / "specs"]), Executor(agent_runner=collect))
         runtime.engine.kanban = self.adapter
+        self.runtimes.append(runtime)
         self.addCleanup(runtime.close)
         return runtime.start()
 
     def wait(self, predicate):
-        deadline = time.monotonic() + 6
+        started = time.monotonic()
+        deadline = started + 6
         while time.monotonic() < deadline:
             result = predicate()
             if result:
                 return result
             time.sleep(0.01)
-        self.fail("adoption did not settle")
+        runs = [self.db.get_run(row["run_id"]) for row in self.db.list_runs("all")]
+        diagnostics = {
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "runs": runs,
+            "attempts": {run["run_id"]: self.db.attempts(run["run_id"]) for run in runs},
+            "cards": self.board.cards(),
+            "runtimes": [
+                {
+                    "owner": runtime.owner,
+                    "thread_alive": bool(runtime.thread and runtime.thread.is_alive()),
+                    "startup_error": repr(runtime._startup_error),
+                }
+                for runtime in self.runtimes
+            ],
+        }
+        self.fail("adoption did not settle: " + json.dumps(diagnostics, default=str))
 
     def state(self, run):
         return self.db.get_run(run["run_id"])

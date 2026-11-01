@@ -69,13 +69,28 @@ class WorkflowTests(unittest.TestCase):
         return runtime
 
     def wait(self, run_id, statuses=("completed", "failed", "cancelled", "waiting"), timeout=8):
-        deadline = time.monotonic() + timeout
+        started = time.monotonic()
+        deadline = started + timeout
         while time.monotonic() < deadline:
             state = self.db.get_run(run_id)
             if state["status"] in statuses:
                 return state
             time.sleep(0.02)
-        self.fail(f"run did not reach {statuses}: {self.db.get_run(run_id)}")
+        diagnostics = {
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "run": self.db.get_run(run_id),
+            "attempts": self.db.attempts(run_id),
+            "trace_tail": self.db.trace(run_id).splitlines()[-10:],
+            "runtimes": [
+                {
+                    "owner": runtime.owner,
+                    "thread_alive": bool(runtime.thread and runtime.thread.is_alive()),
+                    "startup_error": repr(runtime._startup_error),
+                }
+                for runtime in self.runtimes
+            ],
+        }
+        self.fail(f"run did not reach {statuses}: " + json.dumps(diagnostics, default=str))
 
     def test_wal_single_flight_and_threaded_reads(self):
         with self.db.connect() as con:
@@ -708,13 +723,12 @@ class WorkflowTests(unittest.TestCase):
             [agent("work", profile="native", model="test-model@test-provider", skills=["coding"])]
         )
         original_home = os.environ.get("HERMES_HOME")
-        sys.path.insert(0, str(host))
-        try:
+        # Only the child needs this partial Hermes fixture. Exposing it to the
+        # parent makes native config discovery depend on earlier module imports.
+        with patch.dict(os.environ, {"PYTHONPATH": str(host)}):
             runtime = self.runtime().start()
             state = runtime.engine.start(wf)
             result = self.wait(state["run_id"])
-        finally:
-            sys.path.remove(str(host))
         self.assertEqual(result["status"], "completed", result)
         output = json.loads(result["nodes"]["work"]["output"])
         self.assertEqual(output["kwargs"]["provider"], "test-provider")
@@ -777,14 +791,11 @@ class WorkflowTests(unittest.TestCase):
             "import time\ndef load_hermes_dotenv(**kwargs):\n time.sleep(10)\n", encoding="utf-8"
         )
         runtime = self.runtime().start()
-        sys.path.insert(0, str(host))
-        try:
+        with patch.dict(os.environ, {"PYTHONPATH": str(host)}):
             # Allow a cold Windows interpreter to reach the deliberately
             # stalled stage; 0.7s also timed out normal process startup.
             state = runtime.engine.start(workflow([agent("slow", timeout_seconds=3)]))
             result = self.wait(state["run_id"])
-        finally:
-            sys.path.remove(str(host))
         self.assertEqual(result["status"], "failed")
         self.assertIn("loading_profile_environment", result["nodes"]["slow"]["error"])
 

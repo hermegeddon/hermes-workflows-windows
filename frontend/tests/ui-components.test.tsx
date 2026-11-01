@@ -299,6 +299,6 @@ describe("Select", () => {
     await userEvent.click(screen.getByRole("combobox", { name: "Fruit" }));
     expect(await screen.findByText("OpenAI")).toBeInTheDocument();
     expect(screen.getByText("Anthropic")).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "gpt" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "gpt" })).toBeInTheDocument();
   });
 });
