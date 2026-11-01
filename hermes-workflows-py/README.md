@@ -335,8 +335,9 @@ The normal dispatcher interval can delay a newly queued card.
 
 Cards carry the profile, model, skills, runtime cap, native retry setting and
 workflow/step IDs. An explicit `workdir` uses a native `dir` workspace; otherwise
-the native dispatcher manages a scratch workspace. Managed Git worktrees remain
-a separate feature. Node-specific toolset, token/iteration
+the native dispatcher manages a scratch workspace. Selecting `workspace.type`
+as `worktree` instead prepares a linked Git worktree as described below.
+Node-specific toolset, token/iteration
 and external-secret overrides are not representable by the installed native
 card API and fail explicitly; use `board: false` for those overrides.
 
@@ -419,7 +420,40 @@ Live Windows web/Desktop adoption acceptance passed on November 1 with a guarded
 local provider: dependency ordering, native implementation/review, Desktop human
 approval, and cancellation preserving an existing card. See
 [`docs/compatibility.md`](../docs/compatibility.md) for evidence and host setup
-requirements. Managed worktrees and release stacking are not enabled here.
+requirements.
+
+### Managed worktrees and release stacking
+
+Project board agent nodes can select `workspace: {"type": "worktree"}` in JSON
+or **Workspace → worktree** in either editor. Set `workdir` or the board's
+`default_workdir` to an absolute project repository. The backend prepares a real
+linked checkout at `<repo>/.worktrees/<card-id>` on `wf/<card-id>` before the
+card becomes dispatchable. Hermes' dispatcher pins the worker's process cwd and
+`TERMINAL_CWD` to that checkout. Global and off-board nodes cannot use managed
+worktrees.
+
+An adopted scope can add `stack: true` and optionally `branch: "feat/release"`.
+The shared branch must already be checked out in the release repository. Each
+card runs sequentially from its current tip; after successful implementation and
+optional native review, a fast-forward barrier includes that card's commits
+before the next card starts. The card instructions ask workers to commit on their
+assigned branch and leave version/CHANGELOG changes to a dedicated release step.
+This directive does not restrict which files a worker can edit.
+
+The repository identity, shared branch, card paths and barrier commit IDs persist
+with the attempt. Recovery recognizes a fast-forward completed before its
+acknowledgement, without merging twice. A failed card stops the stack. Dirty
+checkouts, divergent branches, changed workspace bindings, occupied paths and
+Windows sharing locks fail with instructions to reconcile the repository and
+retry. Branch changes are explicit operator actions; the backend does not switch
+the release checkout automatically.
+
+Adopted cards and their worktrees remain user-owned on cancellation. Owned cards
+use native cancellation cleanup, which preserves dirty or unpublished worktrees;
+the workflow backend never resets files, force-removes worktrees, deletes branches
+or pushes a release. `scripts/verify_native_worktrees.py --hermes-source <checkout>`
+checks real Git commits, native dispatch/cwd setup, restart and preservation in a
+temporary home, intercepting the final worker spawn so no model runs.
 
 Native adapter availability can be inspected without executing workflows:
 
@@ -437,8 +471,8 @@ in this backend yet.
 The dashboard's current client routes are implemented, but the Python backend
 does not reproduce every upstream integration. Bound project agent tasks use
 native Kanban; global and explicitly off-board tasks execute directly. Adoption
-requires a bound project board. Stacked releases and managed worktree nodes fail validation; use
-explicit `workdir` paths for existing directories.
+and managed worktrees require a bound project board. Stacked adoption advances
+an already-checked-out shared branch by fast-forward only.
 Conditional loop edges are implemented. Workflow result delivery and
 OpenSecondBrain writes are not implemented. The O2B badge reports local
 installation/configuration only. Event triggers remain declarative, as upstream;

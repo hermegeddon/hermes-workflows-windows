@@ -105,7 +105,7 @@ def validate(workflow: dict) -> dict:
         ):
             err("empty_command", f"script '{name}' requires a command")
         if kind == "agent_task":
-            for field in ("adopt", "sequential"):
+            for field in ("adopt", "sequential", "stack"):
                 if field in node and type(node[field]) is not bool:
                     err("invalid_adopt", f"'{name}'.{field} must be boolean")
             for field in ("task_ref", "review_profile"):
@@ -134,11 +134,20 @@ def validate(workflow: dict) -> dict:
             if not isinstance(workspace, dict):
                 err("invalid_workspace", f"'{name}' workspace must be an object")
                 workspace = {}
-            if node.get("stack") or workspace.get("type") == "worktree":
-                err(
-                    "unsupported_workspace",
-                    f"'{name}': managed worktrees and stacked releases are not implemented; use a workdir",
-                )
+            if "workspace" in node and workspace.get("type") not in ("scratch", "worktree"):
+                err("invalid_workspace", f"'{name}': workspace.type must be scratch or worktree")
+            if node.get("stack") and node.get("adopt") is not True:
+                err("stack_without_adopt", f"'{name}': stack requires adopt:true")
+            if "branch" in node and (
+                not isinstance(node["branch"], str) or not node["branch"].strip()
+            ):
+                err("invalid_branch", f"'{name}': branch must be a non-empty string")
+            if "branch" in node and not node.get("stack"):
+                err("branch_without_stack", f"'{name}': branch requires stack:true")
+            if (node.get("stack") or workspace.get("type") == "worktree") and node.get(
+                "board"
+            ) is False:
+                err("worktree_off_board", f"'{name}': worktrees require native board execution")
         for key in ("profile", "model", "workdir", "title", "description"):
             if key in node and not isinstance(node[key], str):
                 err("invalid_field", f"{name}.{key} must be a string")
@@ -561,9 +570,12 @@ def compile_preview(workflow: dict) -> dict:
                             "task_ref",
                             "review_profile",
                             "sequential",
+                            "stack",
+                            "branch",
                         )
                         if k in n
                     },
+                    **({"workspace": n["workspace"]["type"]} if "workspace" in n else {}),
                 }
             )
     _, _, _, roots, _ = analyse(workflow)

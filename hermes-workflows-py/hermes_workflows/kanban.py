@@ -20,6 +20,7 @@ from .db import TERMINAL, ConflictError
 from .effects import EffectStore
 from .executor import Result
 from .native import NativeUnavailable
+from .worktrees import Worktrees
 
 log = logging.getLogger(__name__)
 CREATOR = "hermes-workflows-py"
@@ -92,6 +93,7 @@ class KanbanExecutor:
         self.effects = EffectStore(db)
         self.poll_seconds = poll_seconds
         self.adoption = None
+        self.worktrees = Worktrees(host)
 
     @contextmanager
     def board(self, slug, *, expected=None, ensure=False):
@@ -163,8 +165,14 @@ class KanbanExecutor:
         expected = json.loads(previous[0])["path"] if previous else None
         # Exact board path is part of the durable intent; never reconnect a
         # recovered attempt to a similarly named board on a different host.
-        with self.board(board, expected=expected, ensure=True) as (_, _, path):
-            pass
+        workspace = json.loads(previous[0]).get("workspace") if previous else None
+        with self.board(board, expected=expected, ensure=True) as (native, conn, path):
+            if node.get("workspace", {}).get("type") == "worktree":
+                columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+                if not {"workspace_kind", "workspace_path", "branch_name"} <= columns:
+                    raise NativeUnavailable("native Kanban lacks managed worktree columns")
+                if previous is None:
+                    workspace = self.worktrees.context(node, native, board)
         payload = {
             "home": str(self.host.home),
             "board": board,
@@ -175,6 +183,8 @@ class KanbanExecutor:
             "node": node,
             "timeout": timeout,
         }
+        if workspace:
+            payload["workspace"] = workspace
         effect = self.effects.prepare(
             run["run_id"],
             key,
@@ -208,8 +218,13 @@ class KanbanExecutor:
                         assignee=node["profile"],
                         created_by=CREATOR,
                         idempotency_key=key,
-                        workspace_kind="dir" if node.get("workdir") else "scratch",
-                        workspace_path=node.get("workdir"),
+                        workspace_kind="worktree"
+                        if workspace
+                        else "dir"
+                        if node.get("workdir")
+                        else "scratch",
+                        workspace_path=workspace["repo"] if workspace else node.get("workdir"),
+                        triage=bool(workspace),
                         board=board,
                         project_id="",
                         model_override=node.get("model"),
@@ -221,8 +236,64 @@ class KanbanExecutor:
                         "UPDATE tasks SET workflow_template_id=?,current_step_key=? WHERE id=?",
                         (run["workflow_id"], node["id"], task_id),
                     )
+                    if workspace:
+                        target = self.worktrees.target(workspace, task_id)
+                        conn.execute(
+                            "UPDATE tasks SET status='blocked',workspace_path=?,branch_name=? WHERE id=?",
+                            (target["path"], target["branch"], task_id),
+                        )
+                        self.host.module("adoption")._append_event(
+                            conn, task_id, "blocked", {"reason": "Preparing workflow worktree"}
+                        )
                 # Native create_task uses a nested savepoint. Only this outer
                 # commit publishes the card AND workflow metadata to dispatch.
+        if workspace:
+            # The blocked card commits before filesystem changes, preserving a
+            # stable task/path identity across process death during Git setup.
+            with self.db.connect(write=True) as workflow_conn:
+                row = self.db._owned_row(
+                    workflow_conn, run["run_id"], owner, revision, (node["id"], attempt_id)
+                )
+                if json.loads(row["state"])["status"] in TERMINAL:
+                    raise ConflictError("worktree run is terminal")
+                with self.board(board, expected=path) as (kb, conn, _):
+                    with kb.write_txn(conn):
+                        conn.execute(
+                            "CREATE TABLE IF NOT EXISTS hermes_workflows_workspaces (action_key TEXT PRIMARY KEY, receipt TEXT NOT NULL)"
+                        )
+                        saved = conn.execute(
+                            "SELECT receipt FROM hermes_workflows_workspaces WHERE action_key=?",
+                            (key,),
+                        ).fetchone()
+                        if not saved:
+                            task = conn.execute(
+                                "SELECT * FROM tasks WHERE id=?", (task_id,)
+                            ).fetchone()
+                            self._check(task, key, run["workflow_id"], node["id"])
+                            if task["status"] != "blocked":
+                                raise ConflictError(
+                                    "worktree card changed before workspace preparation"
+                                )
+                            target = self.worktrees.target(workspace, task_id)
+                            if (task["workspace_path"], task["branch_name"]) != (
+                                target["path"],
+                                target["branch"],
+                            ):
+                                raise ConflictError(
+                                    "worktree card path or branch changed before preparation"
+                                )
+                            self.worktrees.materialize(workspace, target)
+                            conn.execute("UPDATE tasks SET status='ready' WHERE id=?", (task_id,))
+                            self.host.module("adoption")._append_event(
+                                conn,
+                                task_id,
+                                "promoted_manual",
+                                {"actor": CREATOR, "reason": "Workflow worktree prepared"},
+                            )
+                            conn.execute(
+                                "INSERT INTO hermes_workflows_workspaces VALUES(?,?)",
+                                (key, json.dumps(target)),
+                            )
         handle = {"kind": KIND, "board": board, "path": path, "task_id": task_id, "key": key}
         self._current(*args)
         if effect["status"] == "unknown":

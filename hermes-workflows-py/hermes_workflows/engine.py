@@ -545,12 +545,16 @@ class Engine:
                 node.setdefault("model", workflow["defaults"]["model"])
             if "max_retries" in workflow.get("defaults", {}):
                 node.setdefault("max_retries", workflow["defaults"]["max_retries"])
-            for key in ("command", "workdir"):
+            for key in ("command", "workdir", "branch"):
                 if key in node:
                     node[key] = resolve(node[key], run)
             if node.get("wait_for"):
                 node["wait_for"] = {k: resolve(v, run) for k, v in node["wait_for"].items()}
             if node["type"] == "agent_task":
+                if (
+                    node.get("stack") or node.get("workspace", {}).get("type") == "worktree"
+                ) and not native_card:
+                    raise ValueError("Worktrees require a project-scoped native board node")
                 graph = dependencies(workflow)
                 lineage = ancestors(graph, node["id"])
                 directives = [run["input"]] if run.get("input") else []

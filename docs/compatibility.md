@@ -48,7 +48,7 @@ Local implementation evidence is in
 | Default project agent execution | Implemented native card creation/polling, profile/model/skills/runtime/retry options, workflow metadata and durable handles. Global, unbound and `board:false` nodes remain direct; unrepresentable overrides fail explicitly | `kanban.py`, `Engine`, compile-preview routing and native/isolated tests; hwp-6pu.6 |
 | Board/project resolution and task links | Explicit run project wins over declared first project; missing boards auto-ensure and archived boards fail. Existing gateway dispatcher owns claims/caps. Adoption respects internal dependency order and preserves native parent gates | `board_for`, scoped native connections, `adoption.py`; hwp-6pu.6, hwp-6pu.7 |
 | Adopted cards | Implemented literal/typed task references, structured-ID extraction, concurrent/sequential scopes, native review, restart receipts and bounded blocked/stuck handling. Current-host dependency gates intentionally prevent pinned force-promote behavior for umbrella children or cyclic/external unfinished parents. Windows web/Desktop live adoption and cancellation passed | U3/U4, `test_adoption.py`, frozen reference fixtures and native verification; hwp-6pu.7 |
-| Managed scratch/worktree workspaces and stacked branches | Native board cards use dispatcher-managed scratch or explicit dir workspaces. Worktree/stack is still rejected | U4 and `test_dispatch_worktree_conformance.py`, `test_adopt_branch_anchor.py`; hwp-6pu.8 |
+| Managed scratch/worktree workspaces and stacked branches | Native board cards support scratch, dir and pre-materialized linked worktrees. Adopted stacks persist branch context and replayable fast-forward barriers; dirty/mismatched/conflicting/locked trees fail without destructive repair. Windows web/Desktop acceptance passed with real native workers and commits | U4, `test_worktrees.py`, `verify_native_worktrees.py`; hwp-6pu.8 |
 | Prompt nodes and ancestor input references | Implemented for DAGs/cycles with runtime channel-availability checks and single-pass named mapping substitution; unavailable current-iteration values fail rather than becoming empty text | `specs.resolve`, `Engine._execute`, loop input fixtures; hwp-6pu.5 |
 | Human review through API, tool, CLI, web and Desktop | Implemented with allowed decisions, notes and immutable run-spec review options; maintained web/Desktop clients fence requests with attempt IDs and handle fast re-entry/late acknowledgements | Review loop/restart/stale-token tests. Re-entry clears old decisions instead of retaining the pinned upstream value; hwp-6pu.5 |
 | Chat reply review routing | Missing: no captured origin or uniquely-waiting-gate `pre_gateway_dispatch` hook | U6; hwp-6pu.10 |
@@ -297,6 +297,42 @@ adoption/review receipts, and an untouched unrelated blocked sentinel. The QA
 config and environment were restored byte-for-byte, the temporary skill and
 backup copies removed, and both fixture workflows disabled. History and proof
 images remain in `.cache/dashboard-check/adoption-live-qa-v2/`.
+
+The managed-worktree checkpoint adds deterministic card branches and linked
+checkouts through Hermes' hardened noninteractive Git runner. An OS repository
+lock serializes workflow Git operations and is released on process death. A
+stack records its repository, common Git directory, checked-out shared branch
+and expected commit; each card's before/after commit barrier is persisted before
+fast-forwarding that branch. Restart reconciles an already-applied barrier.
+An explicit shared branch must already be checked out, an intentional difference
+from the pinned implementation's automatic checkout. The backend never resets
+files, removes worktrees, deletes branches or pushes commits.
+
+All 137 tests passed on Windows Python 3.11 and managed Python 3.14 without
+optional packages (three skips). Fourteen worktree regressions cover physical
+commit ancestry, native review commits, interrupted barriers including actual
+process death, occupied paths, dirty/conflicting/mismatched trees, completed-card
+retry/inclusion, and a real Windows sharing lock followed by recovery. The
+installed-native verifier passed on both runtimes, exercising dispatcher claims,
+worker CWD/environment construction, restart and preservation of a dirty owned
+worktree during native cancellation cleanup. Actual directory-loader, HTTP
+review/loop contracts, lint, asset verification and four loader tests passed.
+
+Live Windows acceptance then passed for `worktrees-live-qa-dd047395c8ca`.
+After refreshing the gateway, dashboards and subscription proxy, a no-model
+canary confirmed the loaded stacking implementation. The web editor started a
+disposable project workflow; two native Hermes workers ran terminal commands in
+separate linked checkouts under `Project żółć with spaces`. The first committed
+`ed67085`; the second verified the first file and committed `9fdd7be` with that
+first commit as its parent. Both durable barriers completed and the shared branch
+`feat/workflow-live` reached the second commit. Desktop approved the human gate,
+and both frontends displayed completion. The two scoped sessions used the guarded
+loopback provider (five requests, zero guard rejections); no external model
+provider was used for this fixture. QA configuration and environment were
+restored byte-for-byte, the provider stopped, sensitive backup copies removed
+and the fixture workflow disabled. Git checkouts and history remain intact;
+audit and proof images are in `.cache/dashboard-check/worktrees-live-qa/`.
+Remote worktree acceptance remains part of the final parity gate.
 
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner

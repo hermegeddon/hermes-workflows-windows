@@ -16,6 +16,7 @@ import time
 
 from .db import TERMINAL, ConflictError
 from .executor import Result
+from .worktrees import Worktrees, release_directive
 
 TASK_REF = re.compile(r"\{\{nodes\.([A-Za-z0-9_-]+)\.output\.task_ids\}\}\Z")
 TASK_TOKEN = re.compile(r"\bt_[0-9a-z]+\b")
@@ -72,12 +73,14 @@ class AdoptionExecutor:
         self.kb = kanban
         self.db = kanban.db
         self.blocked_timeout_seconds = 6 * 60 * 60
+        self.worktrees = Worktrees(self.kb.host)
 
     def plan(self, node, run, board):
         if not board:
             raise AdoptionError("adopt requires a bound Kanban project scope")
         ids = resolve_task_ref(run, node["task_ref"])
-        with self.kb.board(board) as (_, conn, path):
+        workspace = None
+        with self.kb.board(board) as (native, conn, path):
             tasks = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM tasks")}
             missing = [identity for identity in ids if identity not in tasks]
             if missing:
@@ -98,6 +101,8 @@ class AdoptionExecutor:
             if not drivable:
                 raise AdoptionError("scope contains only un-completable umbrella/parent cards")
             internal = [(p, c) for p, c in links if p in drivable and c in drivable]
+            if node.get("stack") or node.get("workspace", {}).get("type") == "worktree":
+                workspace = self.worktrees.context(node, native, board)
         home = str(self.kb.host.home)
         with self.kb.host.scope():
             canonical = self.kb.host.module("adoption")._canonical_assignee
@@ -113,7 +118,12 @@ class AdoptionExecutor:
             ).hexdigest(),
             "ordered": ordered_scope(drivable, internal),
             "excluded": excluded,
-            "sequential": bool(node.get("sequential") or internal) and len(drivable) > 1,
+            "sequential": bool(node.get("sequential") or internal or node.get("stack"))
+            and len(drivable) > 1,
+            "workspace": workspace,
+            "stack": node.get("stack", False),
+            "worktrees": {},
+            "barriers": {},
             "assignee": assignee,
             "reviewer": reviewer,
             "done": [],
@@ -157,25 +167,59 @@ class AdoptionExecutor:
                         raise AdoptionError(f"card {identity} disappeared from the adopted scope")
                     if stage == "review" and task["status"] != "done":
                         return None  # Never reassign a worker in flight.
-                    receipt = {"status": task["status"]}
-                    if stage == "review" or task["status"] not in (
+                    promote = stage == "review" or task["status"] not in (
                         "running",
                         "review",
                         "done",
                         "archived",
-                    ):
-                        if stage in ("adopt", "review"):
-                            unsatisfied = [
-                                r[0]
-                                for r in conn.execute(
-                                    "SELECT p.id FROM tasks p JOIN task_links l ON l.parent_id=p.id WHERE l.child_id=? AND p.status NOT IN ('done','archived')",
-                                    (identity,),
-                                )
-                            ]
-                            if unsatisfied:
-                                raise AdoptionError(
-                                    f"card {identity} has unfinished parents {unsatisfied}; installed Hermes cannot bypass dependency gates. Complete parents or explicitly unlink them on the board"
-                                )
+                    )
+                    if promote:
+                        unsatisfied = [
+                            r[0]
+                            for r in conn.execute(
+                                "SELECT p.id FROM tasks p JOIN task_links l ON l.parent_id=p.id WHERE l.child_id=? AND p.status NOT IN ('done','archived')",
+                                (identity,),
+                            )
+                        ]
+                        if unsatisfied:
+                            raise AdoptionError(
+                                f"card {identity} has unfinished parents {unsatisfied}; installed Hermes cannot bypass dependency gates. Complete parents or explicitly unlink them on the board"
+                            )
+                    receipt = {"status": task["status"]}
+                    if stage == "adopt" and plan.get("workspace"):
+                        if task["status"] in ("running", "review"):
+                            raise AdoptionError(
+                                "Cannot re-anchor a card with an active worker or pending review"
+                            )
+                        workspace = self.worktrees.for_adoption(
+                            plan["workspace"],
+                            identity,
+                            terminal=task["status"] in ("done", "archived"),
+                            review=bool(plan["reviewer"]),
+                        )
+                        body = task["body"] or ""
+                        if plan.get("stack") and "[hermes-workflows: release stacking]" not in body:
+                            body += release_directive(plan["workspace"]["branch"])
+                        if workspace:
+                            conn.execute(
+                                "UPDATE tasks SET workspace_kind='worktree',workspace_path=?,branch_name=?,body=? WHERE id=?",
+                                (workspace["path"], workspace["branch"], body, identity),
+                            )
+                            receipt["workspace"] = workspace
+                    if stage == "review" and identity in plan.get("worktrees", {}):
+                        workspace = plan["worktrees"][identity]
+                        if (
+                            task["workspace_kind"],
+                            task["workspace_path"],
+                            task["branch_name"],
+                        ) != ("worktree", workspace["path"], workspace["branch"]):
+                            raise AdoptionError(
+                                "Card workspace binding changed before review; reconcile it before retrying"
+                            )
+                        self.worktrees.verify_workspace(
+                            plan["workspace"], plan["worktrees"][identity]
+                        )
+                    if promote:
                         assignee = plan["reviewer"] if stage == "review" else plan["assignee"]
                         conn.execute(
                             "UPDATE tasks SET assignee=?, consecutive_failures=CASE WHEN assignee IS ? THEN consecutive_failures ELSE 0 END, last_failure_error=CASE WHEN assignee IS ? THEN last_failure_error ELSE NULL END WHERE id=?",
@@ -219,6 +263,40 @@ class AdoptionExecutor:
                         (key, json.dumps(receipt)),
                     )
                     return receipt
+
+    def barrier(self, plan, identity, args):
+        if not plan.get("stack") or identity not in plan.get("worktrees", {}):
+            return  # A previously terminal card does not acquire a new worktree.
+        intent = plan["barriers"].get(identity)
+        if intent and intent["status"] == "completed":
+            return
+        if intent is None:
+            intent = self.worktrees.barrier_intent(plan["workspace"], plan["worktrees"][identity])
+            plan["barriers"][identity] = intent
+            self.save(plan, args)  # Persist both commit IDs BEFORE Git changes HEAD.
+        run_id, owner, revision, node_id, attempt_id = args
+        with self.db.connect(write=True) as conn:
+            row = self.db._owned_row(conn, run_id, owner, revision, (node_id, attempt_id))
+            if json.loads(row["state"])["status"] in TERMINAL:
+                raise ConflictError("stacking run is terminal")
+            with self.kb.board(plan["board"], expected=plan["path"]) as (native, board_conn, _):
+                with native.write_txn(board_conn):
+                    task = board_conn.execute(
+                        "SELECT * FROM tasks WHERE id=?", (identity,)
+                    ).fetchone()
+                    workspace = plan["worktrees"][identity]
+                    if task is None or (
+                        task["workspace_kind"],
+                        task["workspace_path"],
+                        task["branch_name"],
+                    ) != ("worktree", workspace["path"], workspace["branch"]):
+                        raise AdoptionError(
+                            "Card workspace binding changed before its commit barrier; reconcile it before retrying"
+                        )
+                    tip = self.worktrees.advance(plan["workspace"], intent)
+        plan["workspace"]["tip"] = tip
+        intent["status"] = "completed"
+        self.save(plan, args)
 
     def save(self, plan, args):
         run_id, owner, revision, node_id, attempt_id = args
@@ -270,7 +348,9 @@ class AdoptionExecutor:
                     ]
                     plan["driven"] = remaining[:1] if plan["sequential"] else remaining
                     for identity in plan["driven"]:
-                        self.action(plan, identity, "adopt", args)
+                        receipt = self.action(plan, identity, "adopt", args)
+                        if receipt.get("workspace"):
+                            plan["worktrees"][identity] = receipt["workspace"]
                     self.save(plan, args)
                 results, statuses = [], []
                 for identity in plan["driven"]:
@@ -300,6 +380,13 @@ class AdoptionExecutor:
                 self.save(plan, args)
                 if all(result is not None for result in results):
                     plan["failed"] |= any(result.outcome == "failure" for result in results)
+                    if plan.get("stack") and plan["failed"]:
+                        return Result(
+                            "failure",
+                            error="Stacked card failed; remaining cards were not promoted",
+                        )
+                    for identity in plan["driven"]:
+                        self.barrier(plan, identity, args)
                     plan["outputs"].extend(result.output for result in results if result.output)
                     plan["done"].extend(plan["driven"])
                     plan["driven"] = []

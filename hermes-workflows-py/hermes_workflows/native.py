@@ -33,6 +33,7 @@ FEATURES = {
     "kanban_store": ("hermes_cli.kanban_db_connect", ("connect", "write_txn")),
     "dispatch": ("hermes_cli.kanban_db_dispatch", ("dispatch_once",)),
     "worktrees": ("hermes_cli.worktree_ops", ("_setup_worktree", "removal_blocked")),
+    "workspace_git": ("hermes_cli.kanban_db_workspace", ("_git",)),
     "cron": ("cron.jobs", ("create_job", "list_jobs", "update_job", "remove_job")),
     "config": ("hermes_cli.config", ("load_config", "save_config")),
     "delivery": ("gateway.delivery", ("DeliveryTarget", "DeliveryRouter")),
