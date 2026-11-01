@@ -9,6 +9,8 @@ import time
 import unittest
 from contextlib import closing
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "hermes-workflows-py"))
 from hermes_workflows.adoption import (
@@ -342,23 +344,38 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(self.card(identity)["status"], "review")
 
     def test_blocked_clock_survives_restart_and_resets_after_recovery(self):
-        identity = self.board.card()
-        runtime = self.runtime()
-        self.adapter.adoption.blocked_timeout_seconds = 0.25
-        run = runtime.engine.start(workflow(identity))
-        self.wait(lambda: self.card(identity)["status"] == "ready")
-        self.board.update(identity, status="blocked")
-        self.wait(lambda: self.state(run)["nodes"]["drive"]["adoption"]["blocked_since"])
-        self.board.update(identity, status="running")
-        self.wait(lambda: self.state(run)["nodes"]["drive"]["adoption"]["blocked_since"] is None)
-        self.board.update(identity, status="blocked")
-        self.wait(lambda: self.state(run)["nodes"]["drive"]["adoption"]["blocked_since"])
-        runtime.close()
-        time.sleep(0.3)
-        self.runtime()
-        final = self.terminal(run)
-        self.assertIn("adopt blocked", final["nodes"]["drive"]["error"])
-        self.assertEqual(self.card(identity)["status"], "blocked")
+        # Database/runner latency must not consume the deliberately tiny time-box.
+        # Patch this module's clock only; asyncio and fixture polling stay real.
+        clock = SimpleNamespace(now=time.time())
+        with patch("hermes_workflows.adoption.time", SimpleNamespace(time=lambda: clock.now)):
+            identity = self.board.card()
+            runtime = self.runtime()
+            self.adapter.adoption.blocked_timeout_seconds = 0.25
+            run = runtime.engine.start(workflow(identity))
+            self.wait(lambda: self.card(identity)["status"] == "ready")
+            self.board.update(identity, status="blocked")
+            blocked_at = self.wait(
+                lambda: self.state(run)["nodes"]["drive"]["adoption"]["blocked_since"]
+            )
+            self.assertEqual(blocked_at, clock.now)
+            self.board.update(identity, status="running")
+            self.wait(
+                lambda: self.state(run)["nodes"]["drive"]["adoption"]["blocked_since"] is None
+            )
+            clock.now += 0.1
+            self.board.update(identity, status="blocked")
+            blocked_at = self.wait(
+                lambda: self.state(run)["nodes"]["drive"]["adoption"]["blocked_since"]
+            )
+            self.assertEqual(blocked_at, clock.now)
+            runtime.close()
+            clock.now += 0.3
+            restarted = self.runtime()
+            final = self.terminal(run)
+            restarted.close()
+            self.assertEqual(final["nodes"]["drive"]["adoption"]["blocked_since"], blocked_at)
+            self.assertIn("adopt blocked", final["nodes"]["drive"]["error"])
+            self.assertEqual(self.card(identity)["status"], "blocked")
 
     def test_extraction_reference_precedence_and_pinned_ordering(self):
         text = "ignore t_wrong ```task_ids\nt_a\nt_b\nt_a\n``` <task_ids>t_c</task_ids>"
