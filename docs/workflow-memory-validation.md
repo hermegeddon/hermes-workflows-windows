@@ -3,6 +3,10 @@
 Recorded 2026-11-02. These are isolated automated results, not evidence of
 retention in the user's live Hindsight service.
 
+The separately authorized [live follow-up](workflow-memory-live-results.md)
+subsequently passed retention/readback, web and native Desktop checks, with
+guarded cleanup. The original results below remain the pre-live checkpoint.
+
 | Check | Result |
 | --- | --- |
 | Python 3.11 full workflow suite, with optional environment dependencies | 285 tests, pass; 1 expected skip |

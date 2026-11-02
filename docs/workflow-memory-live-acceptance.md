@@ -73,5 +73,7 @@ or production profile is copied by the preparation step.
 
 The deployment-free service probe and web test can qualify part of `.11.5`.
 That issue stays open until its physical Desktop and remaining scope acceptance
-requirements are satisfied or explicitly recorded as unsupported. This document
-does not claim that the execution steps have already run.
+requirements are satisfied or explicitly recorded as unsupported. The
+subsequent [execution report](workflow-memory-live-results.md) records the actual
+authorized service, web, native Desktop and cleanup results separately from this
+pre-execution procedure.

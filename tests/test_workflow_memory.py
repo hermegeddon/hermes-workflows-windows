@@ -419,6 +419,52 @@ class WorkflowMemoryTests(unittest.TestCase):
         self.assertEqual(self.outbox.effects.get(effect["effect_id"])["status"], "unknown")
         self.assertEqual(len(sink.writes), 1)
 
+    def test_native_worker_completion_records_keep_the_orchestrator_owner_and_exclude_output(self):
+        from hermes_workflows.kanban import KanbanExecutor
+        from test_kanban import BoardDouble
+        from test_kanban import workflow as board_workflow
+
+        boards = BoardDouble(self.home / "foreign-native-owner")
+        engine = self.engine()
+        engine.kanban = KanbanExecutor(self.db, boards.host(), poll_seconds=0.01)
+        run = engine.start(board_workflow())
+        run_id = run["run_id"]
+        self.assertTrue(self.db.claim(run_id, "native-memory-qa"))
+
+        async def complete():
+            async with asyncio.timeout(20):
+                task = asyncio.create_task(engine.drive(run_id, "native-memory-qa"))
+                try:
+                    while not boards.created:
+                        await asyncio.sleep(0.01)
+                    boards.finish(boards.cards()[0]["id"], output="private native worker output")
+                    await task
+                finally:
+                    if not task.done():
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+
+        asyncio.run(complete())
+        self.assertEqual(self.db.get_run(run_id)["status"], "completed")
+        self.assertEqual(len(boards.created), 1)
+        entries = self.outbox.entries(run_id)
+        completed = [
+            row
+            for row in entries
+            if row["payload"]["record"]["kind"] == "node_completed"
+            and row["payload"]["record"].get("node_id") == "work"
+        ]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0]["payload"]["destination"]["home"], str(self.home))
+        self.assertNotIn(
+            "private native worker output",
+            json.dumps([row["payload"]["record"] for row in entries]),
+        )
+        sink = FakeSink(self.destination)
+        for row in entries:
+            asyncio.run(self.outbox.deliver(row["effect_id"], sink))
+        self.assertEqual(len(sink.writes), len(entries))
+
 
 if __name__ == "__main__":
     unittest.main()
