@@ -530,22 +530,20 @@ class CommandsResumeTests(unittest.TestCase):
                     await release.wait()
                 else:
                     fast.append(node["id"])
-                    if len(fast) == 64:
-                        release.set()
                 return Result(output="ok")
 
             wf = workflow()
             wf["nodes"] = [
-                {"id": f"s{i}", "type": "script", "command": "echo ok"} for i in range(100)
+                {"id": f"s{i}", "type": "script", "command": "echo ok"} for i in range(65)
             ] + [
                 {"id": "start", "type": "condition"},
                 {"id": "slow", "type": "script", "command": "echo slow"},
                 {"id": "end", "type": "finish"},
             ]
-            wf["edges"] = [{"from": f"s{i}", "to": f"s{i + 1}"} for i in range(99)] + [
+            wf["edges"] = [{"from": f"s{i}", "to": f"s{i + 1}"} for i in range(64)] + [
                 {"from": "start", "to": "s0"},
                 {"from": "start", "to": "slow"},
-                {"from": "s99", "to": "end"},
+                {"from": "s64", "to": "end"},
                 {"from": "slow", "to": "end"},
             ]
             self.db.save_settings({"default_mode": "direct", "max_parallel_steps": 2})
@@ -553,11 +551,60 @@ class CommandsResumeTests(unittest.TestCase):
             executor.execute = execute
             engine = Engine(self.db, executor)
             run = engine.start(wf)
-            self.db.claim(run["run_id"], "parallel")
-            await asyncio.wait_for(engine.drive(run["run_id"], "parallel", checkpoint=True), 15)
-            self.assertEqual(len(fast), 64)
-            self.assertEqual(self.db.get_run(run["run_id"])["nodes"]["s64"]["status"], "pending")
-            self.db.claim(run["run_id"], "remaining")
+            plan = engine._plan
+            checkpoint = {}
+
+            def observe_plan(state, workflow):
+                ready = plan(state, workflow)
+                if "s64" in ready and not checkpoint:
+                    # The next script must be ready while the parallel script
+                    # is still running. Release that script only after this
+                    # observation; the driver must drain it without starting s64.
+                    checkpoint.update(fast=len(fast), slow=state["nodes"]["slow"]["status"])
+                    release.set()
+                return ready
+
+            engine._plan = observe_plan
+            self.assertTrue(self.db.claim(run["run_id"], "parallel"))
+            driver = asyncio.create_task(engine.drive(run["run_id"], "parallel", checkpoint=True))
+            started = time.monotonic()
+            try:
+                # This exercises 64 real SQLite scheduling/settlement batches,
+                # not a throughput target. Controlled slow-write probes exceed
+                # the former 15s budget while continuing to make progress.
+                await asyncio.wait_for(asyncio.shield(driver), 60)
+            except TimeoutError:
+                state = self.db.get_run(run["run_id"])
+                with self.db.connect() as con:
+                    lease = dict(con.execute(
+                        "SELECT lease_owner,lease_until FROM py_runs WHERE run_id=?",
+                        (run["run_id"],),
+                    ).fetchone())
+                diagnostics = {
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                    "run_id": run["run_id"], "status": state["status"],
+                    "fast_count": len(fast), "checkpoint": checkpoint,
+                    "nodes": {key: state["nodes"][key] for key in ("slow", "s63", "s64")},
+                    "attempt_tail": self.db.attempts(run["run_id"])[-8:],
+                    "lease": lease,
+                    "driver_stack": [
+                        f"{frame.f_code.co_name}:{frame.f_lineno}" for frame in driver.get_stack()
+                    ],
+                }
+                self.fail("parallel checkpoint timed out: " + json.dumps(diagnostics, default=str))
+            finally:
+                driver.cancel()
+                await asyncio.gather(driver, return_exceptions=True)
+            self.assertEqual(checkpoint, {"fast": 64, "slow": "running"})
+            self.assertEqual(fast, [f"s{i}" for i in range(64)])
+            state = self.db.get_run(run["run_id"])
+            self.assertEqual(state["nodes"]["slow"]["status"], "completed")
+            self.assertEqual(state["nodes"]["s64"]["status"], "pending")
+            with self.db.connect() as con:
+                self.assertIsNone(con.execute(
+                    "SELECT lease_owner FROM py_runs WHERE run_id=?", (run["run_id"],)
+                ).fetchone()[0])
+            self.assertTrue(self.db.claim(run["run_id"], "remaining"))
             await engine.drive(run["run_id"], "remaining", checkpoint=True)
             self.assertEqual(self.db.get_run(run["run_id"])["status"], "completed")
 

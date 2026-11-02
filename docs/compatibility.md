@@ -639,6 +639,18 @@ WebSocket handshake during these checks; both recovered without changing
 deadlines. This does not resolve the separately tracked host-latency release
 gate **hwp-6pu.34**. Hosted CI must also pass after publication.
 
+The first resume publication (`7e68476`) passed five hosted jobs; Windows 3.11
+passed its standard suite but exceeded the parallel-checkpoint fixture's 15s
+budget in the optional suite. A controlled 70ms delay on each database mutation
+reproduced that timeout while 54 scripts had already settled. The fixture now
+uses the minimal 65-script chain, observes the next script ready while its
+parallel peer is still running, and checks the exact 64-batch cap, draining,
+lease release and resumed completion. A bounded 60s test budget accommodates
+real SQLite writes and reports node/attempt/lease/driver diagnostics on timeout.
+The delayed probe passes beyond the old budget; removing the engine cap in a
+negative control still fails. This test-only correction (**hwp-6pu.41**) does
+not change production timing or resolve the broader host-latency gate.
+
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner
 checks through both frontends. Ordinary CI uses temporary storage, stub native
