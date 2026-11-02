@@ -1,5 +1,26 @@
+diff --git a/hermes_cli/plugin_host.py b/hermes_cli/plugin_host.py
+index b4687026a8..d01b0f7171 100644
+--- a/hermes_cli/plugin_host.py
++++ b/hermes_cli/plugin_host.py
+@@ -330,6 +330,16 @@ class PluginHost:
+         for error in errors:
+             logger.warning("Plugin '%s' on_unload callback failed in the plugin host: %s", plugin_key, error)
+ 
++    def invalidate_asgi(self, plugin_dir: Optional[str] = None) -> None:
++        """Forget cached routers in an existing host; never start one just to unload."""
++        channel = self._channel
++        if channel is None or channel.closed_reason is not None:
++            return
++        try:
++            channel.call("invalidate_asgi", {"path": plugin_dir})
++        except Exception:
++            logger.warning("Could not invalidate dashboard cache for %s", self._home, exc_info=True)
++
+     # -- parent -> host -----------------------------------------------------------------------------
+     def _call(self, method: str, params: dict[str, Any], *, generation: Optional[int] = None,
+               timeout: Optional[float] = None, returns: Any = None) -> Any:
 diff --git a/hermes_cli/plugin_host_child.py b/hermes_cli/plugin_host_child.py
-index ffc903e07c..6ca8917661 100644
+index ffc903e07c..488bcc476c 100644
 --- a/hermes_cli/plugin_host_child.py
 +++ b/hermes_cli/plugin_host_child.py
 @@ -135,7 +135,9 @@ class HostRuntime:
@@ -47,7 +68,7 @@ index ffc903e07c..6ca8917661 100644
  
          async def request() -> dict[str, Any]:
              import httpx
-@@ -403,10 +413,18 @@ class HostRuntime:
+@@ -403,12 +413,26 @@ class HostRuntime:
              for ref in [r for r, owner in self.owners.items() if owner == plugin_key]:
                  self.refs.pop(ref, None)
                  self.owners.pop(ref, None)
@@ -56,20 +77,58 @@ index ffc903e07c..6ca8917661 100644
 -            for name in [m for m in sys.modules if m == module_name or m.startswith(module_name + ".")]:
 -                sys.modules.pop(name, None)
 +            plugin_path = self.plugin_paths.pop(plugin_key, None)
-+            if plugin_path is not None:
-+                self.asgi_generation += 1
-+                # Dashboard IDs may differ from manifest keys; ownership follows
-+                # the plugin directory. Other cached apps stay warm.
-+                for path in list(self.asgi_apps):
-+                    if Path(path).is_relative_to(plugin_path):
-+                        self.asgi_apps.pop(path, None)
 +            module_name = self.modules.pop(plugin_key, "")
 +            if module_name:
 +                for name in [m for m in sys.modules if m == module_name or m.startswith(module_name + ".")]:
 +                    sys.modules.pop(name, None)
++        if plugin_path is not None:
++            self.op_invalidate_asgi({"path": str(plugin_path)})
          return {"errors": errors}
  
++    def op_invalidate_asgi(self, params: dict[str, Any]) -> None:
++        """Dashboard-only hosts also participate in manager unload/rediscovery."""
++        plugin_path = Path(str(params["path"])).resolve() if params.get("path") else None
++        with self._lock:
++            self.asgi_generation += 1
++            # Dashboard IDs may differ from backend keys; directory ownership
++            # keeps unrelated warm apps intact on a targeted unload.
++            for path in list(self.asgi_apps):
++                if plugin_path is None or Path(path).is_relative_to(plugin_path):
++                    self.asgi_apps.pop(path, None)
++
      def op_shutdown(self, _params: dict[str, Any]) -> None:
+         for plugin_key in list(self.unload_callbacks):
+             self.op_unload({"plugin_key": plugin_key})
+@@ -418,6 +442,7 @@ class HostRuntime:
+ _HANDLERS: dict[str, Callable[[HostRuntime, dict[str, Any]], Any]] = {
+     "hello": HostRuntime.op_hello, "load": HostRuntime.op_load, "load_instance": HostRuntime.op_load_instance,
+     "asgi": HostRuntime.op_asgi, "profile_call": HostRuntime.op_profile_call,
++    "invalidate_asgi": HostRuntime.op_invalidate_asgi,
+     "invoke": HostRuntime.op_invoke,
+     "obj_invoke": HostRuntime.op_obj_invoke, "obj_getattr": HostRuntime.op_obj_getattr,
+     "obj_setattr": HostRuntime.op_obj_setattr, "unload": HostRuntime.op_unload,
+diff --git a/hermes_cli/plugins_ledger.py b/hermes_cli/plugins_ledger.py
+index 4f35251fa3..3fdc01ce13 100644
+--- a/hermes_cli/plugins_ledger.py
++++ b/hermes_cli/plugins_ledger.py
+@@ -249,6 +249,17 @@ class PluginLedgerMixin:
+         found = bool(target_keys or registrations)
+         self._dispose_registrations(registrations)
+         self._forget_registrations(registrations)
++        # Secondary-profile dashboards always run in a host, even when their
++        # backends run in-process (or the package has no backend at all).
++        host = getattr(self, "_plugin_host_instance", None)
++        if host is not None:
++            if unload_all:
++                host.invalidate_asgi()
++            else:
++                for key in target_keys:
++                    loaded = self._plugins.get(key)
++                    if loaded is not None and loaded.manifest.path:
++                        host.invalidate_asgi(loaded.manifest.path)
+         if unload_all:
+             self._reset_after_unload_all(registrations)
+         else:
 diff --git a/tests/hermes_cli/test_plugin_api_consent_gate.py b/tests/hermes_cli/test_plugin_api_consent_gate.py
 index 113c805fcc..53b7217c93 100644
 --- a/tests/hermes_cli/test_plugin_api_consent_gate.py
@@ -85,10 +144,10 @@ index 113c805fcc..53b7217c93 100644
  
 diff --git a/tests/hermes_cli/test_plugin_host_asgi_reload.py b/tests/hermes_cli/test_plugin_host_asgi_reload.py
 new file mode 100644
-index 0000000000..d6c06b4a42
+index 0000000000..e823a086f4
 --- /dev/null
 +++ b/tests/hermes_cli/test_plugin_host_asgi_reload.py
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,125 @@
 +"""A targeted hosted-plugin reload must replace its cached dashboard router."""
 +
 +import json
@@ -123,8 +182,9 @@ index 0000000000..d6c06b4a42
 +
 +@pytest.mark.platforms("any")
 +@pytest.mark.parametrize("callback_raises", [False, True])
++@pytest.mark.parametrize("isolation", ["host", "in_process"])
 +def test_targeted_reload_replaces_owned_api_without_reloading_other_plugins(
-+    tmp_path, monkeypatch, callback_raises
++    tmp_path, monkeypatch, callback_raises, isolation
 +):
 +    body = (
 +        "def register(ctx):\n"
@@ -132,7 +192,7 @@ index 0000000000..d6c06b4a42
 +        + ("  raise RuntimeError('synthetic unload error')\n" if callback_raises else "  pass\n")
 +        + " ctx.on_unload(unload)\n"
 +    )
-+    home = _home_with_plugins(tmp_path, monkeypatch, {"first": body, "other": body})
++    home = _home_with_plugins(tmp_path, monkeypatch, {"first": body, "other": body}, isolation=isolation)
 +    apis = {
 +        name: home / "plugins" / name / "dashboard with spaces" / "plugin_api.py"
 +        for name in ("first", "other")
@@ -175,8 +235,9 @@ index 0000000000..d6c06b4a42
 +
 +
 +@pytest.mark.platforms("any")
-+def test_cold_import_finishing_after_unload_cannot_repopulate_stale_cache(tmp_path, monkeypatch):
-+    home = _home_with_plugins(tmp_path, monkeypatch, {"first": "def register(ctx): pass\n"})
++@pytest.mark.parametrize("isolation", ["host", "in_process"])
++def test_cold_import_finishing_after_unload_cannot_repopulate_stale_cache(tmp_path, monkeypatch, isolation):
++    home = _home_with_plugins(tmp_path, monkeypatch, {"first": "def register(ctx): pass\n"}, isolation=isolation)
 +    api = home / "plugins" / "first" / "dashboard" / "plugin_api.py"
 +    gate = tmp_path / "release"
 +    _write_api(api, "original", gate=gate)
@@ -212,3 +273,49 @@ index 0000000000..d6c06b4a42
 +        gate.touch()
 +        manager.unload()
 +        host.shutdown()
+diff --git a/tests/hermes_cli/test_plugin_secondary_profile_host.py b/tests/hermes_cli/test_plugin_secondary_profile_host.py
+index 1b472b557f..6238e43305 100644
+--- a/tests/hermes_cli/test_plugin_secondary_profile_host.py
++++ b/tests/hermes_cli/test_plugin_secondary_profile_host.py
+@@ -432,6 +432,41 @@ def _shutdown_hosts():
+             host.shutdown()
+ 
+ 
++@pytest.mark.platforms("any")
++def test_rediscovery_refreshes_dashboard_only_secondary_host(daemon, monkeypatch, tmp_path):
++    """A secondary dashboard host may never load a backend, but still owns cached routers."""
++    monkeypatch.setattr(PluginHost, "asgi_request", _REAL_ASGI_REQUEST)
++    monkeypatch.setattr(plugins_mod, "get_bundled_plugins_dir", lambda: tmp_path / "no-bundled")
++    _beta_plugin(daemon, isolation="in_process")
++    api = daemon.beta / "plugins" / NAME / "dashboard" / "plugin_api.py"
++
++    def write(version):
++        api.write_text(
++            "import os\nfrom fastapi import APIRouter\nrouter = APIRouter()\n"
++            "@router.get('/version')\ndef version():\n"
++            f" return {{'version': {version!r}, 'pid': os.getpid()}}\n",
++            encoding="utf-8",
++        )
++
++    def request():
++        response = daemon.client.get(f"/api/plugins/{NAME}/version", headers=daemon.beta_ticket())
++        assert response.status_code == 200, response.text
++        return response.json()
++
++    try:
++        write("before")
++        before = request()
++        assert before["version"] == "before" and before["pid"] != os.getpid()
++        manager = plugins_mod._plugin_managers_by_home[daemon.beta.resolve()]
++        assert NAME not in manager._plugins  # dashboard-only package, never a host.load()
++        write("after explicit rediscovery")
++        manager.discover_and_load(force=True)
++        after = request()
++        assert after == {"version": "after explicit rediscovery", "pid": before["pid"]}
++    finally:
++        _shutdown_hosts()
++
++
+ def _asgi_client():
+     """An async client on the real app, so one test can hold requests in flight side by side."""
+     import httpx

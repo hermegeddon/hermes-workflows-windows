@@ -420,7 +420,11 @@ class WorkflowTests(unittest.TestCase):
             workdir = self.root / (shell + " space żółć")
             workdir.mkdir()
             if shell == "powershell":
-                command = "[IO.File]::WriteAllText('entered-shell.txt','entered'); " + command
+                command = (
+                    "[IO.File]::WriteAllText('entered-shell.txt', "
+                    "([Diagnostics.Stopwatch]::GetTimestamp().ToString() + ':' + "
+                    "[Diagnostics.Stopwatch]::Frequency)); " + command
+                )
             wf = workflow(
                 [
                     {
@@ -434,12 +438,12 @@ class WorkflowTests(unittest.TestCase):
                 ],
                 id=shell,
             )
-            started = time.monotonic()
+            started = time.perf_counter()
             phases, processes = {}, []
             original_start, original_popen = ProcessLaunch.start, subprocess.Popen.__init__
 
             def phase(name, phases=phases, started=started):
-                phases[name] = round((time.monotonic() - started) * 1000, 3)
+                phases[name] = round((time.perf_counter() - started) * 1000, 3)
 
             def traced_popen(process, *args, original_popen=original_popen,
                              processes=processes, phase=phase, **kwargs):
@@ -462,12 +466,21 @@ class WorkflowTests(unittest.TestCase):
                     # distinguish OS launch from shell startup if CI times out.
                     result = self.wait(state["run_id"], timeout=65)
                 finally:
+                    marker = workdir / "entered-shell.txt"
+                    if marker.exists():
+                        try:
+                            ticks, frequency = map(int, marker.read_text("utf-8").split(":"))
+                            phases["shell_body_entered_ms"] = round(
+                                (ticks / frequency - started) * 1000, 3
+                            )
+                        except (OSError, ValueError):
+                            phases["shell_marker_incomplete"] = True
                     print("Native shell diagnostic: " + json.dumps({
                         "shell": shell, "phases": dict(phases),
                         "shell_entered": (workdir / "entered-shell.txt").exists(),
                         "result_written": (workdir / "result.txt").exists(),
                         "children": [{"pid": p.pid, "returncode": p.poll()} for p in processes],
-                        "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                        "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
                     }))
             self.assertEqual(result["status"], "completed", result)
             print(f"Native {shell}: {result['nodes']['script']['telemetry']['duration_ms']} ms")

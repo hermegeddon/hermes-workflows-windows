@@ -289,6 +289,42 @@ deadline changes are part of these diagnostic assertions. The complete workflow
 module passes locally on both runtimes; hosted evidence is needed to locate a
 recurrence before attributing it to process creation or PowerShell itself.
 
+CI `41478326584` on the first diagnostic checkpoint `b09136b` passed all ten jobs.
+Its four Windows lanes created and resumed PowerShell within 0.14–0.24 seconds
+of the fixture start, while complete PowerShell execution took 21–50 seconds.
+Those passing slow samples place the delay after resume; they do not locate the
+earlier 60-second failure or establish its cause. The fixture additionally records
+the shell-body entry timestamp using the same Windows performance counter as
+Python, separating initialization from command execution and process exit.
+
+### Dashboard-only secondary-profile router caches
+
+Initial live deployment of `e8f6bfd` reproduced a missing lifecycle case (`.34.12`):
+a secondary profile's dashboard runs in a plugin host even if its backend runs
+in-process or is absent. Such a host receives no backend load/unload callback.
+The supported gateway rediscovery acknowledged reload, but a warmed disposable
+route still returned generation A after its source changed to B. Restoring the
+source also left the old probe cached; refreshing only that idle QA host removed
+it, with normal `/runs` requests still succeeding. Original QA source bytes were
+restored, and no model or memory calls were made.
+
+The cumulative host artifact now includes explicit ASGI-cache invalidation on
+manager unload, after registrations drain. Full rediscovery clears that profile's
+existing host cache; targeted unload clears only the owning manifest directories.
+An unused host is never started for teardown. The existing generation guard
+rejects cache insertion by an import that crosses invalidation.
+
+Four regressions fail on the initial checkpoint: targeted reload with an
+in-process backend (including a raising callback), its late cold import, and a
+real secondary-profile HTTP route from a dashboard-only package. The final
+checkpoint `9f68f20` passes all six qualification modules (83 tests, five expected
+platform skips) and all 14 canonical source checks. The cumulative patch also
+passes `git apply --check` against the isolated memory-host extension without
+installing that extension. Evidence is retained under `.cache/release-checks/`:
+`asgi-router-only-before-qualified.log`, `asgi-router-only-acceptance.log` and
+`asgi-router-only-final-check.log`. Deployment/cleanup evidence is in its
+`asgi-deployment/` directory and Beads `.34.9`/`.34.12`.
+
 ## Repeating the synthetic diagnostic
 
 From the repository root, using the desired Python interpreter:
