@@ -65,7 +65,7 @@ class WorkflowMemoryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="workflow memory żółć ")
         self.addCleanup(self.temp.cleanup)
-        self.home = Path(self.temp.name)
+        self.home = Path(self.temp.name).resolve()
         self.db = Database(self.home / "workflows/runs.db")
         self.destination = Destination(str(self.home), "fake", "a" * 64)
         self.policy = MemoryPolicy(self.destination, enabled=True, write_node_events=True)

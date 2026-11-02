@@ -75,7 +75,7 @@ class MemorySettingsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="memory settings żółć ")
         self.addCleanup(self.temp.cleanup)
-        self.home = Path(self.temp.name)
+        self.home = Path(self.temp.name).resolve()
         self.db = Database(self.home / "workflows/runs.db")
         self.binds, self.writes, self.lookups = [], [], []
         self.unavailable = None

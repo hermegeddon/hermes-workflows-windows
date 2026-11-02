@@ -60,7 +60,7 @@ class MemoryAdapterTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="memory adapter żółć ")
         self.addCleanup(self.temp.cleanup)
-        self.home = Path(self.temp.name)
+        self.home = Path(self.temp.name).resolve()
         self.client = Client(self.home, "hermes-workflows")
         self.context = {"session_id": "run", "cwd": "C:/example/project", "scheduled": False}
 
