@@ -19,6 +19,54 @@ from hermes_workflows.process_launch import ProcessLaunch
 
 
 class ProcessLifecycleTests(unittest.TestCase):
+    def test_launch_completion_cannot_discard_external_cancellation(self):
+        original_start = ProcessLaunch.start
+        original_shield = asyncio.shield
+        launches, boundary = [], []
+
+        def capture(owner, *args, **kwargs):
+            launches.append(owner)
+            return original_start(owner, *args, **kwargs)
+
+        async def exercise():
+            loop = asyncio.get_running_loop()
+
+            def check_boundary(task):
+                boundary.append(launches[0].abandoned.is_set())
+                if not boundary[-1]:
+                    task.cancel()  # clean up a first cancellation swallowed by the old wait
+
+            def cancel_when_ready(future):
+                outer = original_shield(future)
+                owner = asyncio.current_task()
+
+                def completed(done):
+                    if not done.cancelled():
+                        owner.cancel()
+                        loop.call_soon(check_boundary, owner)
+
+                outer.add_done_callback(completed)
+                return outer
+
+            with (
+                patch.object(ProcessLaunch, "start", capture),
+                patch("hermes_workflows.executor.asyncio.shield", cancel_when_ready),
+            ):
+                task = asyncio.create_task(
+                    run_process([sys.executable, "-c", "import time; time.sleep(30)"])
+                )
+                try:
+                    with self.assertRaises(asyncio.CancelledError):
+                        await asyncio.wait_for(task, 30)
+                finally:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+            self.assertEqual(boundary, [True], "launch completion swallowed external cancellation")
+            self.assertTrue(launches[0].closed.is_set())
+            self.assertIsNotNone(launches[0].process.poll())
+
+        asyncio.run(exercise())
+
     def test_peer_workflow_is_dispatched_while_another_launch_is_blocked(self):
         from hermes_workflows.db import Database
         from hermes_workflows.runtime import Runtime

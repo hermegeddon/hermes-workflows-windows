@@ -182,9 +182,11 @@ async def run_process(
                     )
 
         launch_task.add_done_callback(observe)
-        await asyncio.wait_for(
-            asyncio.shield(launch_task), max(0, timeout - (time.monotonic() - started))
-        )
+        # Python 3.11 wait_for can swallow external cancellation when its
+        # future completes concurrently. Keep the launch shielded, but apply
+        # the deadline to this task so cancellation always reaches cleanup.
+        async with asyncio.timeout(max(0, timeout - (time.monotonic() - started))):
+            await asyncio.shield(launch_task)
         launch_ms = round((time.monotonic() - started) * 1000)
         process = launch_state.process
         while process.poll() is None:

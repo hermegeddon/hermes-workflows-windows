@@ -433,6 +433,26 @@ pass on both runtimes, including the original expiry/security cases. Evidence:
 `approval-before*.log`, `approval-slow*.log`, `approval-negative*.log` and
 `approval-module*.log` under `.cache/release-checks/`.
 
+### External cancellation at launch completion on Python 3.11
+
+Integration CI `41490064269` exposed a production race (`.34.16`), rather than
+another readiness limit. The unchanged saturated-executor cancellation test
+timed out after three seconds because the first cancellation was lost at the
+launch wait. Python 3.11's `asyncio.wait_for` can return its completed inner
+future when external cancellation arrives concurrently, allowing process
+polling to continue until a second cancellation.
+
+A deterministic regression schedules cancellation as the shielded launch future
+finishes, then checks that the first cancellation has entered owned cleanup on
+the next event-loop turn. It fails on the previous Python 3.11 implementation
+and passes on Python 3.14. The launch deadline now uses `asyncio.timeout` around
+the existing shield. This preserves both external cancellation and late-child
+ownership without changing the production timeout or the three-second
+saturated-executor assertion. All seven process-lifecycle tests pass on both
+runtimes, including late launch, setup failure, deadline and pool saturation.
+Evidence: `launch-cancel-race-before311.log`, `launch-cancel-race-before314.log`
+and `launch-cancel-fixed*.log` under `.cache/release-checks/`.
+
 ## Repeating the synthetic diagnostic
 
 From the repository root, using the desired Python interpreter:
