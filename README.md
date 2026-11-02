@@ -16,8 +16,10 @@ The optional dashboard integration test runs when FastAPI, httpx, and PyYAML are
 available in the selected interpreter. Provider calls are replaced with deterministic
 fixtures; no tests consume LLM credits or modify the real Hermes home.
 
-CI runs Python 3.11 and 3.14 on Windows and Linux, first with the standard
-library and then with the optional adapter dependencies in `requirements-ci.txt`.
+CI runs Python 3.11 and 3.14 on Windows and Linux, with independent jobs for the
+standard-library suite and optional adapter dependencies in `requirements-ci.txt`.
+Each suite has its own bounded job budget so a slow first suite cannot consume
+the second suite's time allowance.
 Both platforms also run frontend typechecking, tests, and production builds.
 Rebuilt bundles must match the committed assets. Check asset integrity locally:
 

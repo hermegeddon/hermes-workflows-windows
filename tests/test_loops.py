@@ -419,15 +419,15 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(calls, ["check", "fix"])
 
     def test_reaching_finish_cancels_an_unrelated_active_branch(self):
-        entered, cancelled = threading.Event(), threading.Event()
+        entered, cancelled = asyncio.Event(), threading.Event()
 
         async def runner(node, run):
             if node["id"] == "short":
-                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                await asyncio.wait_for(entered.wait(), timeout=15)
                 return Result(output="finished")
             entered.set()
             try:
-                await asyncio.sleep(100)
+                await asyncio.Event().wait()
             except asyncio.CancelledError:
                 cancelled.set()
                 return Result(output="late output must not replace cancelled state")
@@ -443,11 +443,27 @@ class LoopTests(unittest.TestCase):
         ]
         runtime = self.runtime(runner)
         run_id = runtime.engine.start(wf)["run_id"]
-        result = self.wait(run_id)
+
+        def settled(run):
+            if run["status"] not in ("completed", "failed", "cancelled"):
+                return False
+            # The driver releases its lease after draining cancelled branches,
+            # including a worker that catches cancellation and returns late output.
+            with self.db.connect() as con:
+                return con.execute(
+                    "SELECT lease_owner FROM py_runs WHERE run_id=?", (run_id,)
+                ).fetchone()[0] is None
+
+        result = self.wait(run_id, settled, timeout=30)
         self.assertEqual(result["status"], "completed", result)
-        self.assertTrue(cancelled.wait(2))
-        self.assertEqual(self.db.get_run(run_id)["nodes"]["long"]["status"], "cancelled")
-        self.assertNotIn("output", self.db.get_run(run_id)["nodes"]["long"])
+        self.assertEqual(result["nodes"]["short"]["outcome"], "success")
+        self.assertEqual(result["nodes"]["done"]["status"], "completed")
+        self.assertTrue(cancelled.is_set())
+        self.assertEqual(result["nodes"]["long"]["status"], "cancelled")
+        self.assertNotIn("output", result["nodes"]["long"])
+        attempts = {a["node_id"]: a["status"] for a in self.db.attempts(run_id)}
+        self.assertEqual(attempts["long"], "cancelled")
+        self.assertEqual(attempts["done"], "completed")
 
     def test_interrupted_loop_work_requires_explicit_retry_after_restart(self):
         calls = []

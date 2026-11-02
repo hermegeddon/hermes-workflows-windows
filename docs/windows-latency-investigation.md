@@ -212,6 +212,41 @@ Evidence: `fan-in-before.log`, `fan-in-after311.log`, `fan-in-after314.log`,
 `fan-in-serial311.log`, `fan-in-serial314.log`, `fan-in-module311.log` and
 `fan-in-module314.log` under `.cache/release-checks/`.
 
+### Loop completion and independent CI budgets
+
+The subsequent optional Windows 3.14 run exposed a separate six-second wait in
+`test_reaching_finish_cancels_an_unrelated_active_branch` (`.34.7`). A controlled
+950 ms delay on each of seven SQLite mutations reproduces it locally: the short
+branch completes and the long branch remains active while the finish operation
+is still being persisted. The old test fails after its six-second allowance;
+the probe ends in 7.047 seconds.
+
+The corrected fixture uses an asyncio event to require the long branch to enter
+before the short branch succeeds. The long branch waits for cancellation rather
+than sleeping for an arbitrary duration. Its bounded 30-second completion wait
+also requires the driver lease to be released, which happens after cancelled
+branches have drained. Assertions check a successful short branch, completed
+finish step, observed cancellation, persisted cancelled attempt, and absence of
+the worker's deliberately returned late output. The shared six-second helper
+and production deadlines are unchanged.
+
+The same slow-write probe passes in 7.078 seconds on Python 3.11 and 7.162 seconds
+on Python 3.14. A negative control corrupting the finish operation's cancellation
+state fails on both runtimes. All 17 loop tests pass on each. Evidence is in
+`loop-finish-before.log`, `loop-finish-after311.log`, `loop-finish-after314.log`,
+`loop-finish-negative311.log`, `loop-finish-negative314.log` and the corresponding
+`loop-finish-module*.log` files under `.cache/release-checks/`.
+
+The Windows 3.11 CI cancellation was a separate job-budget problem (`.34.8`):
+its passing standard-library suite took 631.706 seconds, consuming most of the
+15-minute allowance shared with another full optional-adapter suite. CI now
+uses independent standard-library and adapter jobs for every OS/Python pair.
+Each retains its own 15-minute cap and runs a complete suite. Adapter jobs still
+lint, every Python job verifies assets, and both frontend jobs remain required.
+The resulting matrix contains eight Python jobs plus two frontend jobs. There
+were no branch-protection check contexts or repository rulesets to migrate when
+the Python job names changed.
+
 ## Repeating the synthetic diagnostic
 
 From the repository root, using the desired Python interpreter:

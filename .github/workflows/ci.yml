@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   python:
-    name: Python ${{ matrix.python }} / ${{ matrix.os }}
+    name: Python ${{ matrix.python }} / ${{ matrix.os }} / ${{ matrix.suite }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -22,6 +22,7 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
         python: ['3.11', '3.14']
+        suite: [stdlib, adapters]
     env:
       PYTHONUTF8: '1'
       HERMES_HOME: ${{ github.workspace }}/.cache/hermes-workflows-ci
@@ -33,12 +34,16 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Standard-library suite
+        if: matrix.suite == 'stdlib'
         run: python -m unittest discover -s tests -v
       - name: Install optional adapter test dependencies
+        if: matrix.suite == 'adapters'
         run: python -m pip install -r requirements-ci.txt
       - name: Suite including FastAPI and YAML adapters
+        if: matrix.suite == 'adapters'
         run: python -m unittest discover -s tests -v
       - name: Lint
+        if: matrix.suite == 'adapters'
         run: python -m ruff check hermes-workflows-py/hermes_workflows hermes-workflows-py/__init__.py hermes-workflows-py/_bootstrap.py hermes-workflows-py/install.py hermes-workflows-py/dashboard/plugin_api.py tests scripts
       - name: Verify committed assets
         run: python scripts/verify_assets.py
