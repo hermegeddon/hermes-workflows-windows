@@ -383,6 +383,31 @@ order (`9f68f20`, `f019a0404b`, `e8f6bfd`), then use the guarded gateway restart
 and refresh the web/Desktop backend hosts while idle. Do not reset the installed
 checkout; its unrelated local modifications are outside this correction.
 
+### Cancellation fixture readiness and actual process exit
+
+Integration CI `41484720817` exposed another fixture limit (`.34.14`): the
+Windows/Python 3.14 adapter job failed only the process-tree cancellation test,
+before its parent wrote the startup marker within five seconds. The script node
+was still running; the qualified PowerShell integration check passed at 3.5 seconds.
+
+The revised fixture requires both the Python parent and grandchild to publish
+their PIDs before cancellation, with a bounded 30-second readiness wait. A
+release barrier keeps them alive rather than spending a one-second survival
+window during startup. Held Windows process handles then prove that both
+generations exit after cancellation, within a bounded 15-second cleanup wait.
+The old fixed 1.2-second observation sleep is gone. A finally block releases
+the synthetic children and cleans up any held process identities on failure;
+production timeouts remain unchanged.
+
+A controlled six-second launch delay reproduces the old five-second failure on
+both runtimes. The corrected test passes under the same delay in 7.360 seconds
+(3.11) and 7.104 seconds (3.14). A negative control suppressing job-object closure
+while allowing the shell itself to be killed is rejected on both runtimes:
+the surviving parent/grandchild fail the process-handle assertion. The complete
+26-test workflow module passes on both runtimes. Evidence is retained in
+`cancel-before*.log`, `cancel-slow*.log`, `cancel-negative*.log` and
+`cancel-module*.log` under `.cache/release-checks/`.
+
 ## Repeating the synthetic diagnostic
 
 From the repository root, using the desired Python interpreter:

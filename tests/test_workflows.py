@@ -515,22 +515,33 @@ class WorkflowTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows cancellation")
     def test_engine_cancel_kills_real_process_tree(self):
+        import ctypes
+
         started = self.root / "parent started.txt"
+        child_ready = self.root / "child ready.txt"
+        release = self.root / "release child.txt"
         marker = self.root / "cancel child survived.txt"
+        wait_for_release = (
+            "deadline=time.monotonic()+90\n"
+            f"while not Path({str(release)!r}).exists() and time.monotonic()<deadline:\n"
+            " time.sleep(0.02)\n"
+        )
         child = self.root / "cancel child.py"
         child.write_text(
-            "import time\nfrom pathlib import Path\ntime.sleep(1)\nPath("
+            "import os,time\nfrom pathlib import Path\n"
+            f"Path({str(child_ready)!r}).write_text(str(os.getpid()),encoding='ascii')\n"
+            + wait_for_release + "Path("
             + repr(str(marker))
             + ").write_text('survived')\n",
             encoding="utf-8",
         )
         parent = self.root / "cancel parent.py"
         parent.write_text(
-            "import subprocess,sys,time\nfrom pathlib import Path\nsubprocess.Popen([sys.executable,"
+            "import os,subprocess,sys,time\nfrom pathlib import Path\nsubprocess.Popen([sys.executable,"
             + repr(str(child))
             + "])\nPath("
             + repr(str(started))
-            + ").write_text('started')\ntime.sleep(20)\n",
+            + ").write_text(str(os.getpid()),encoding='ascii')\n" + wait_for_release,
             encoding="utf-8",
         )
         wf = workflow(
@@ -545,14 +556,52 @@ class WorkflowTests(unittest.TestCase):
         )
         runtime = self.runtime().start()
         state = runtime.engine.start(wf)
-        deadline = time.monotonic() + 5
-        while not started.exists() and time.monotonic() < deadline:
-            time.sleep(0.02)
-        self.assertTrue(started.exists(), self.db.get_run(state["run_id"]))
-        runtime.engine.cancel(state["run_id"])
-        time.sleep(1.2)
-        self.assertFalse(marker.exists())
-        self.assertEqual(self.db.get_run(state["run_id"])["status"], "cancelled")
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+        kernel.WaitForSingleObject.restype = ctypes.c_ulong
+        kernel.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        handles = []
+
+        def ready_pids():
+            try:
+                return [int(path.read_text("ascii")) for path in (started, child_ready)]
+            except (FileNotFoundError, ValueError):
+                return []
+
+        try:
+            # Both generations must actually run before cancellation. The child
+            # stays behind a release barrier, so slow startup cannot consume its
+            # survival window or yield a false pass without a real grandchild.
+            deadline = time.monotonic() + 30
+            while not ready_pids() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            pids = ready_pids()
+            self.assertEqual(len(pids), 2, self.db.get_run(state["run_id"]))
+            for pid in pids:
+                handle = kernel.OpenProcess(0x100001, False, pid)  # synchronize + cleanup terminate
+                self.assertTrue(handle, f"Could not hold process {pid}: {ctypes.get_last_error()}")
+                handles.append(handle)
+            self.assertTrue(all(kernel.WaitForSingleObject(h, 0) == 258 for h in handles))
+            runtime.engine.cancel(state["run_id"])
+            deadline = time.monotonic() + 15
+            while any(kernel.WaitForSingleObject(h, 0) != 0 for h in handles) and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(
+                all(kernel.WaitForSingleObject(h, 0) == 0 for h in handles),
+                "Parent or grandchild survived engine cancellation",
+            )
+            self.assertFalse(marker.exists())
+            self.assertEqual(self.db.get_run(state["run_id"])["status"], "cancelled")
+        finally:
+            release.touch()
+            for handle in handles:
+                if kernel.WaitForSingleObject(handle, 5000) != 0:
+                    kernel.TerminateProcess(handle, 1)  # held identity; never a recycled PID
+                    kernel.WaitForSingleObject(handle, 5000)
+                kernel.CloseHandle(handle)
 
     @unittest.skipUnless(os.name == "nt", "Windows env and encoding")
     def test_script_env_allowlist_unicode_output_and_exit_codes(self):
