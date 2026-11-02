@@ -305,6 +305,21 @@ return from `Set-Content` and `Write-Output` to distinguish those cmdlets from
 process exit. The earlier 60-second timeout remains a recurrence to capture;
 no production deadlines or runner security settings have been relaxed.
 
+CI `41481881996` on `6bd6a31` passed all ten jobs and narrows those passing
+samples further: after entering the body in 0.39–0.49 seconds, `Set-Content`
+returns at 30.98–33.53 seconds; `Write-Output` then takes 0.35–0.42 seconds and
+the remaining exit/persistence overhead is under 0.35 seconds. This is a
+cmdlet-level delay, not a suspended process or unresponsive Python event loop.
+
+The two native PowerShell fixtures now explicitly name the Microsoft modules
+owning their cmdlets, retaining real `Set-Content`/`Write-Output`, Unicode I/O,
+environment filtering and exit-code checks with the same 60-second deadlines.
+[Microsoft documents module-qualified command names](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_command_precedence)
+as a way to select the owning module, including automatic import. Fresh hosted
+timings qualify whether that selection removes the discovery-sensitive fixture
+delay (`.34.13`). User scripts, examples, runtime environment handling and runner
+security settings are unchanged; this does not rewrite arbitrary user commands.
+
 ### Dashboard-only secondary-profile router caches
 
 Initial live deployment of `e8f6bfd` reproduced a missing lifecycle case (`.34.12`):

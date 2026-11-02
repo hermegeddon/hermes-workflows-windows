@@ -415,8 +415,8 @@ class WorkflowTests(unittest.TestCase):
         runtime = self.runtime().start()
         for shell, command in (
             ("cmd", 'echo hello> "result.txt"'),
-            ("powershell", "'żółć' | Set-Content -Encoding UTF8 result.txt; "
-             "HwpTimingMark 'set_content_returned_ms'; Write-Output 'done'; "
+            ("powershell", "'żółć' | Microsoft.PowerShell.Management\\Set-Content -Encoding UTF8 result.txt; "
+             "HwpTimingMark 'set_content_returned_ms'; Microsoft.PowerShell.Utility\\Write-Output 'done'; "
              "HwpTimingMark 'write_output_returned_ms'"),
         ):
             workdir = self.root / (shell + " space żółć")
@@ -565,7 +565,10 @@ class WorkflowTests(unittest.TestCase):
                         "id": "work",
                         "type": "script",
                         "shell": "powershell",
-                        "command": "Write-Output ('żółć|' + $env:HWP_PUBLIC + '|' + $env:HWP_SECRET)",
+                        "command": (
+                            "Microsoft.PowerShell.Utility\\Write-Output "
+                            "('żółć|' + $env:HWP_PUBLIC + '|' + $env:HWP_SECRET)"
+                        ),
                         "timeout_seconds": 60,
                     }
                 ]
