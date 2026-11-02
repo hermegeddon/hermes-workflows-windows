@@ -25,6 +25,13 @@ Rebuilt bundles must match the committed assets. Check asset integrity locally:
 python scripts/verify_assets.py
 ```
 
+For synthetic startup timing without gateway or model calls, see the
+[Windows latency investigation](docs/windows-latency-investigation.md) and run:
+
+```powershell
+python scripts/diagnose_runtime_latency.py --iterations 4 --max-seconds 60 --out latency.json
+```
+
 The pinned upstream capability assessment is in
 [`docs/compatibility.md`](docs/compatibility.md). Implementation ownership and
 dependencies live in Beads under epic `hwp-6pu`.

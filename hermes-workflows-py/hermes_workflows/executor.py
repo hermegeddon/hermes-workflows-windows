@@ -6,9 +6,9 @@ import asyncio
 import base64
 import ctypes
 import json
+import logging
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -16,6 +16,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
+
+from .process_launch import ProcessLaunch
 
 
 @dataclass
@@ -143,7 +145,8 @@ async def run_process(
 ) -> Result:
     """File capture avoids pipe deadlocks even with chatty grandchildren."""
     started = time.monotonic()
-    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+    launch_state = ProcessLaunch(WindowsJob)
+    try:
         flags = (
             subprocess.CREATE_NO_WINDOW | 0x00000004 if os.name == "nt" else 0
         )  # CREATE_SUSPENDED
@@ -158,58 +161,37 @@ async def run_process(
             and Path(argv[0]).name.lower() in ("cmd", "cmd.exe")
             else argv
         )
-        process = subprocess.Popen(
-            launch,
-            cwd=cwd,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=out,
-            stderr=err,
-            creationflags=flags,
-            start_new_session=os.name != "nt",
+        launch_task = asyncio.create_task(
+            asyncio.to_thread(
+                launch_state.start,
+                launch,
+                cwd=cwd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                creationflags=flags,
+                start_new_session=os.name != "nt",
+            )
         )
-        job = None
-        try:
-            if os.name == "nt":
-                # Suspend before assigning the job so a fast shell cannot spawn
-                # grandchildren outside it.
-                job = WindowsJob(process)
-                resume = ctypes.WinDLL("ntdll").NtResumeProcess
-                resume.argtypes = [ctypes.c_void_p]
-                resume.restype = ctypes.c_long
-                if resume(int(process._handle)) < 0:
-                    raise OSError("could not resume Windows worker")
-            while process.poll() is None:
-                if time.monotonic() - started >= timeout:
-                    raise TimeoutError(f"step exceeded {timeout:g} seconds")
-                await asyncio.sleep(0.03)
-        except BaseException:
-            if job:
-                job.close()
-            elif os.name == "nt":
-                # The launch is still suspended if job assignment failed, so
-                # it cannot have spawned children and can be killed directly.
-                process.kill()
-            else:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            if process.poll() is None:
-                process.kill()
-            await asyncio.to_thread(process.wait, 5)
-            raise
-        finally:
-            if job:
-                job.close()
-            if os.name != "nt":
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-        out.seek(0)
-        err.seek(0)
-        stdout, stderr = out.read(max_output + 1), err.read(max_output + 1)
+
+        def observe(task):
+            if not task.cancelled():
+                error = task.exception()
+                if error is not None and launch_state.abandoned.is_set():
+                    logging.getLogger(__name__).warning(
+                        "Late process launch failed (%s)", type(error).__name__
+                    )
+
+        launch_task.add_done_callback(observe)
+        await asyncio.wait_for(
+            asyncio.shield(launch_task), max(0, timeout - (time.monotonic() - started))
+        )
+        launch_ms = round((time.monotonic() - started) * 1000)
+        process = launch_state.process
+        while process.poll() is None:
+            if time.monotonic() - started >= timeout:
+                raise TimeoutError(f"step exceeded {timeout:g} seconds")
+            await asyncio.sleep(0.03)
+        stdout, stderr = await asyncio.to_thread(launch_state.output, max_output)
 
         def decode(data):
             try:
@@ -228,8 +210,14 @@ async def run_process(
             (error or f"process exited with code {process.returncode}")
             if process.returncode
             else None,
-            {"duration_ms": round((time.monotonic() - started) * 1000)},
+            {"duration_ms": round((time.monotonic() - started) * 1000), "launch_ms": launch_ms},
         )
+    except TimeoutError:
+        raise TimeoutError(f"step exceeded {timeout:g} seconds") from None
+    finally:
+        cleanup = launch_state.abandon()
+        while cleanup is not None and cleanup.is_alive():
+            await asyncio.sleep(0.01)
 
 
 class Executor:

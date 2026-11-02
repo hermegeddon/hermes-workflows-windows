@@ -1,0 +1,214 @@
+diff --git a/hermes_cli/plugin_host_child.py b/hermes_cli/plugin_host_child.py
+index ffc903e07c..6ca8917661 100644
+--- a/hermes_cli/plugin_host_child.py
++++ b/hermes_cli/plugin_host_child.py
+@@ -135,7 +135,9 @@ class HostRuntime:
+         self._lock = threading.Lock()
+         self.unload_callbacks: dict[str, list[Callable[[], Any]]] = {}
+         self.modules: dict[str, str] = {}
++        self.plugin_paths: dict[str, Path] = {}
+         self.asgi_apps: dict[str, Any] = {}
++        self.asgi_generation = 0
+         self.profiles: dict[str, dict[str, Any]] = {}
+         self.instance_modules: dict[str, Any] = {}
+         self.stopped = threading.Event()
+@@ -245,6 +247,8 @@ class HostRuntime:
+ 
+     def op_load(self, params: dict[str, Any]) -> dict[str, Any]:
+         plugin_key = str(params["plugin_key"])
++        if params.get("path"):
++            self.plugin_paths[plugin_key] = Path(str(params["path"])).resolve()
+         target = _import_plugin(params)
+         register = target if callable(target) and not isinstance(target, types.ModuleType) \
+             else getattr(target, "register", None)
+@@ -304,8 +308,10 @@ class HostRuntime:
+ 
+     def op_asgi(self, params: dict[str, Any]) -> Any:
+         """Serve one dashboard API request with the plugin's FastAPI ``router`` (loaded once)."""
+-        api_path = Path(str(params["dashboard_dir"])) / str(params["api_file"])
+-        app = self.asgi_apps.get(str(api_path))
++        api_path = (Path(str(params["dashboard_dir"])) / str(params["api_file"])).resolve()
++        with self._lock:
++            app = self.asgi_apps.get(str(api_path))
++            generation = self.asgi_generation
+         if app is None:
+             from fastapi import FastAPI
+             module_name = f"hermes_dashboard_plugin_{params['plugin']}"
+@@ -320,7 +326,11 @@ class HostRuntime:
+                 raise AttributeError(f"dashboard api {api_path.name} has no 'router'")
+             app = FastAPI()
+             app.include_router(router)
+-            self.asgi_apps[str(api_path)] = app
++            with self._lock:
++                # A cold import may finish after unload. Let its in-flight
++                # request finish, but never restore its stale app to the cache.
++                if generation == self.asgi_generation:
++                    self.asgi_apps[str(api_path)] = app
+ 
+         async def request() -> dict[str, Any]:
+             import httpx
+@@ -403,10 +413,18 @@ class HostRuntime:
+             for ref in [r for r, owner in self.owners.items() if owner == plugin_key]:
+                 self.refs.pop(ref, None)
+                 self.owners.pop(ref, None)
+-        module_name = self.modules.pop(plugin_key, "")
+-        if module_name:
+-            for name in [m for m in sys.modules if m == module_name or m.startswith(module_name + ".")]:
+-                sys.modules.pop(name, None)
++            plugin_path = self.plugin_paths.pop(plugin_key, None)
++            if plugin_path is not None:
++                self.asgi_generation += 1
++                # Dashboard IDs may differ from manifest keys; ownership follows
++                # the plugin directory. Other cached apps stay warm.
++                for path in list(self.asgi_apps):
++                    if Path(path).is_relative_to(plugin_path):
++                        self.asgi_apps.pop(path, None)
++            module_name = self.modules.pop(plugin_key, "")
++            if module_name:
++                for name in [m for m in sys.modules if m == module_name or m.startswith(module_name + ".")]:
++                    sys.modules.pop(name, None)
+         return {"errors": errors}
+ 
+     def op_shutdown(self, _params: dict[str, Any]) -> None:
+diff --git a/tests/hermes_cli/test_plugin_api_consent_gate.py b/tests/hermes_cli/test_plugin_api_consent_gate.py
+index 113c805fcc..53b7217c93 100644
+--- a/tests/hermes_cli/test_plugin_api_consent_gate.py
++++ b/tests/hermes_cli/test_plugin_api_consent_gate.py
+@@ -56,7 +56,7 @@ def _install(home, name):
+     dashboard.mkdir(parents=True)
+     (dashboard / "manifest.json").write_text(json.dumps({"name": name, "api": "plugin_api.py"}))
+     (dashboard / "plugin_api.py").write_text(_PLUGIN_API)
+-    (dashboard / "index.js").write_text("export {}\n")
++    (dashboard / "index.js").write_text("export {}\n", encoding="utf-8", newline="\n")
+     return dashboard / "IMPORTED"
+ 
+ 
+diff --git a/tests/hermes_cli/test_plugin_host_asgi_reload.py b/tests/hermes_cli/test_plugin_host_asgi_reload.py
+new file mode 100644
+index 0000000000..d6c06b4a42
+--- /dev/null
++++ b/tests/hermes_cli/test_plugin_host_asgi_reload.py
+@@ -0,0 +1,123 @@
++"""A targeted hosted-plugin reload must replace its cached dashboard router."""
++
++import json
++import os
++import sys
++from concurrent.futures import ThreadPoolExecutor
++
++import pytest
++
++from hermes_cli.plugins import PluginManager
++from tests.hermes_cli.test_plugin_host import _home_with_plugins
++from tests.waiting import wait_until
++
++
++def _write_api(path, version, gate=None):
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(
++        "import os, uuid\nfrom fastapi import APIRouter\n"
++        f"VERSION = {version!r}\nINSTANCE = uuid.uuid4().hex\n"
++        + (
++            "from pathlib import Path\nfrom tests.waiting import wait_until\n"
++            f"Path({str(gate.with_suffix('.entered'))!r}).touch()\n"
++            f"wait_until(lambda: Path({str(gate)!r}).exists(), timeout=15)\n"
++            if gate is not None else ""
++        )
++        + "router = APIRouter()\n"
++        "@router.get('/version')\ndef version():\n"
++        " return {'version': VERSION, 'instance': INSTANCE, 'pid': os.getpid()}\n",
++        encoding="utf-8",
++    )
++
++
++@pytest.mark.platforms("any")
++@pytest.mark.parametrize("callback_raises", [False, True])
++def test_targeted_reload_replaces_owned_api_without_reloading_other_plugins(
++    tmp_path, monkeypatch, callback_raises
++):
++    body = (
++        "def register(ctx):\n"
++        " def unload():\n"
++        + ("  raise RuntimeError('synthetic unload error')\n" if callback_raises else "  pass\n")
++        + " ctx.on_unload(unload)\n"
++    )
++    home = _home_with_plugins(tmp_path, monkeypatch, {"first": body, "other": body})
++    apis = {
++        name: home / "plugins" / name / "dashboard with spaces" / "plugin_api.py"
++        for name in ("first", "other")
++    }
++    for api in apis.values():
++        _write_api(api, "original")
++    manager = PluginManager()
++    manager.discover_and_load()
++    host = manager._plugin_host()
++
++    def request(name):
++        # Dashboard IDs need not equal their owning backend's manifest name.
++        response = host.asgi_request(
++            f"{name}-dashboard", str(apis[name].parent), apis[name].name,
++            "GET", "/version", "", [], b"", timeout=10,
++        )
++        assert response["status"] == 200
++        return json.loads(response["body"])
++
++    try:
++        assert all(manager._plugins[name].error is None for name in apis)
++        manifest = manager._plugins["first"].manifest
++        first, other = request("first"), request("other")
++        assert first["version"] == other["version"] == "original"
++        assert first["pid"] == other["pid"] == host.info["pid"] != os.getpid()
++        assert not any(name.startswith("hermes_dashboard_plugin_") for name in sys.modules)
++        _write_api(apis["first"], "updated after targeted reload")
++        _write_api(apis["other"], "unrelated plugin should remain cached")
++        assert manager.unload("first")
++        manager._load_plugin(manifest)
++        assert manager._plugins["first"].error is None
++        reloaded = request("first")
++        assert reloaded["version"] == "updated after targeted reload"
++        assert reloaded["instance"] != first["instance"]
++        assert reloaded["pid"] == first["pid"]  # no process restart hides stale caches
++        assert request("other") == other
++    finally:
++        manager.unload()
++        host.shutdown()
++
++
++@pytest.mark.platforms("any")
++def test_cold_import_finishing_after_unload_cannot_repopulate_stale_cache(tmp_path, monkeypatch):
++    home = _home_with_plugins(tmp_path, monkeypatch, {"first": "def register(ctx): pass\n"})
++    api = home / "plugins" / "first" / "dashboard" / "plugin_api.py"
++    gate = tmp_path / "release"
++    _write_api(api, "original", gate=gate)
++    manager = PluginManager()
++    manager.discover_and_load()
++    host = manager._plugin_host()
++
++    def request():
++        response = host.asgi_request(
++            "first-dashboard", str(api.parent), api.name, "GET", "/version", "", [], b"", timeout=20,
++        )
++        assert response["status"] == 200
++        return json.loads(response["body"])
++
++    try:
++        with ThreadPoolExecutor(max_workers=1) as pool:
++            pending = pool.submit(request)
++            try:
++                wait_until(gate.with_suffix(".entered").exists, what="old API import entered")
++                manifest = manager._plugins["first"].manifest
++                _write_api(api, "updated after concurrent unload")
++                assert manager.unload("first")
++                manager._load_plugin(manifest)
++            finally:
++                gate.touch()
++            # An in-flight old request may finish; subsequent requests must be new.
++            old = pending.result(timeout=20)
++            assert old["version"] == "original"
++            current = request()
++            assert current["version"] == "updated after concurrent unload"
++            assert current["pid"] == old["pid"]
++    finally:
++        gate.touch()
++        manager.unload()
++        host.shutdown()
