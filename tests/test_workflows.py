@@ -415,15 +415,19 @@ class WorkflowTests(unittest.TestCase):
         runtime = self.runtime().start()
         for shell, command in (
             ("cmd", 'echo hello> "result.txt"'),
-            ("powershell", "'żółć' | Set-Content -Encoding UTF8 result.txt; Write-Output 'done'"),
+            ("powershell", "'żółć' | Set-Content -Encoding UTF8 result.txt; "
+             "HwpTimingMark 'set_content_returned_ms'; Write-Output 'done'; "
+             "HwpTimingMark 'write_output_returned_ms'"),
         ):
             workdir = self.root / (shell + " space żółć")
             workdir.mkdir()
             if shell == "powershell":
                 command = (
-                    "[IO.File]::WriteAllText('entered-shell.txt', "
-                    "([Diagnostics.Stopwatch]::GetTimestamp().ToString() + ':' + "
-                    "[Diagnostics.Stopwatch]::Frequency)); " + command
+                    "function HwpTimingMark($name) { "
+                    "[IO.File]::AppendAllText('entered-shell.txt', "
+                    "($name + ':' + [Diagnostics.Stopwatch]::GetTimestamp().ToString() + ':' + "
+                    "[Diagnostics.Stopwatch]::Frequency + [Environment]::NewLine)); }; "
+                    "HwpTimingMark 'shell_body_entered_ms'; " + command
                 )
             wf = workflow(
                 [
@@ -469,10 +473,11 @@ class WorkflowTests(unittest.TestCase):
                     marker = workdir / "entered-shell.txt"
                     if marker.exists():
                         try:
-                            ticks, frequency = map(int, marker.read_text("utf-8").split(":"))
-                            phases["shell_body_entered_ms"] = round(
-                                (ticks / frequency - started) * 1000, 3
-                            )
+                            for line in marker.read_text("utf-8").splitlines():
+                                name, ticks, frequency = line.split(":")
+                                phases[name] = round(
+                                    (int(ticks) / int(frequency) - started) * 1000, 3
+                                )
                         except (OSError, ValueError):
                             phases["shell_marker_incomplete"] = True
                     print("Native shell diagnostic: " + json.dumps({

@@ -297,6 +297,14 @@ earlier 60-second failure or establish its cause. The fixture additionally recor
 the shell-body entry timestamp using the same Windows performance counter as
 Python, separating initialization from command execution and process exit.
 
+CI `41480263931` on `3718e74` also passed all ten jobs. The four Windows
+PowerShell samples entered the script body in 0.33–0.40 seconds but completed
+in 41–56 seconds. This places those delays after shell-body entry, not in native
+process creation or basic PowerShell initialization. The diagnostic also marks
+return from `Set-Content` and `Write-Output` to distinguish those cmdlets from
+process exit. The earlier 60-second timeout remains a recurrence to capture;
+no production deadlines or runner security settings have been relaxed.
+
 ### Dashboard-only secondary-profile router caches
 
 Initial live deployment of `e8f6bfd` reproduced a missing lifecycle case (`.34.12`):
@@ -324,6 +332,19 @@ installing that extension. Evidence is retained under `.cache/release-checks/`:
 `asgi-router-only-before-qualified.log`, `asgi-router-only-acceptance.log` and
 `asgi-router-only-final-check.log`. Deployment/cleanup evidence is in its
 `asgi-deployment/` directory and Beads `.34.9`/`.34.12`.
+
+Live deployment of `9f68f20` passes the same A-to-B proof through the actual
+gateway: both responses come from the same QA host process, and the restored
+probe then returns 404 while `/runs` returns 200. Default/QA configuration,
+credential-file bytes, workflow settings, run/attempt history and all seven
+pre-existing Hermes edits match their pre-deployment fingerprints. The memory
+extension remains isolated. No model or memory calls were made. Evidence:
+`asgi-deployment/live-reload-v2.json` and `verified-v2.json`.
+
+Rollback preserves local edits: revert the dedicated host commits in reverse
+order (`9f68f20`, `f019a0404b`, `e8f6bfd`), then use the guarded gateway restart
+and refresh the web/Desktop backend hosts while idle. Do not reset the installed
+checkout; its unrelated local modifications are outside this correction.
 
 ## Repeating the synthetic diagnostic
 
