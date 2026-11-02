@@ -691,6 +691,16 @@ resolved this acceptance blocker. The broader host findings remain tracked in
 **hwp-6pu.34**; no production deadline was raised. Evidence is under
 `.cache/release-checks/templates-*` and `.cache/dashboard-check/templates-live/`.
 
+The first template publication (`b3e0649`) passed five hosted jobs, but the
+Windows 3.11 optional-adapter suite reached the loop-budget fixture's six-second
+test deadline while another loop turn was still progressing. A controlled 350ms
+delay per database mutation reproduced it; the same fixture then passed in
+11.25s with a test-specific 30s bound. Exact loop-budget/attempt assertions remain,
+with added retry-revision/reset checks and attempt/lease diagnostics on timeout.
+Wrong-budget and short-deadline negative controls still fail as expected. This
+test-only correction (**hwp-53c**) does not change production deadlines or resolve
+the broader host-latency gate.
+
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner
 checks through both frontends. Ordinary CI uses temporary storage, stub native

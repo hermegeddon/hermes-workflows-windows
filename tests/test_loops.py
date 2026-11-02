@@ -86,14 +86,25 @@ class LoopTests(unittest.TestCase):
         self,
         run_id,
         predicate=lambda r: r["status"] in ("waiting", "completed", "failed", "cancelled"),
+        *,
+        timeout=6,
     ):
-        deadline = time.monotonic() + 6
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             run = self.db.get_run(run_id)
             if predicate(run):
                 return run
             time.sleep(0.01)
-        self.fail(f"loop did not settle: {run}")
+        attempts = [
+            (a["node_id"], a["iteration"], a["attempt"], a["status"])
+            for a in self.db.attempts(run_id)
+        ]
+        with self.db.connect() as con:
+            lease = dict(con.execute(
+                "SELECT lease_owner,lease_until,revision FROM py_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone())
+        self.fail(f"loop did not settle within {timeout}s: {run}; attempts={attempts}; lease={lease}")
 
     def test_pinned_pure_decision_reference(self):
         fixture = json.loads((Path(__file__).parent / "fixtures/loop-reference.json").read_text())
@@ -245,20 +256,29 @@ class LoopTests(unittest.TestCase):
         runtime = self.runtime(runner)
         wf = workflow()
         run_id = runtime.engine.start(wf)["run_id"]
-        failed = self.wait(run_id)
+        # Multiple loop turns persist real SQLite transactions. On Windows CI
+        # their I/O can exceed six seconds even while every turn progresses.
+        failed = self.wait(run_id, timeout=30)
         self.assertEqual(failed["status"], "failed", failed)
         self.assertIn("loop re-entry limit", failed["error"])
         self.assertEqual(failed["loop_reentries"], 2)
+        for node_id in ("check", "fix"):
+            self.assertEqual(
+                [a["iteration"] for a in self.db.attempts(run_id) if a["node_id"] == node_id],
+                [0, 1],
+            )
         successful = True
         save(self.db, {"max_loop_reentries": 10})
         runtime.engine.retry(run_id, wf, "check")
-        waiting = self.wait(run_id)
+        waiting = self.wait(run_id, timeout=30)
         self.assertEqual(waiting["status"], "waiting", waiting)
+        self.assertEqual(waiting["execution_revision"], 1)
+        self.assertEqual(waiting["loop_reentries"], 0)
         runtime.engine.review(
             run_id, "review", "approved", attempt_id=waiting["nodes"]["review"]["attempt_id"]
         )
         self.assertEqual(
-            self.wait(run_id, lambda r: r["status"] in ("completed", "failed"))["status"],
+            self.wait(run_id, lambda r: r["status"] in ("completed", "failed"), timeout=30)["status"],
             "completed",
         )
 
