@@ -273,6 +273,22 @@ child-process guard rejects any PowerShell launch while observing the real
 `cli-persistence-guard*.log` under `.cache/release-checks/`. This fixture correction
 does not claim to fix historical cold PowerShell startup delays.
 
+The corrected commit `f71a937` passed all ten jobs in feature-branch CI
+`41471853032`. Its integration-branch run `41472938798` passed nine jobs but
+reproduced a 60-second timeout in the dedicated native PowerShell integration
+test on Windows/Python 3.14 without adapters. This is an intermittent failure
+on identical code, not a complete resolution of cold startup (`.34.11`).
+
+That integration fixture now prints synthetic phase timings even on failure:
+entry into the launch thread, return from native process creation, return from
+job assignment/resume, shell-body entry, result-file creation and observed
+child exit status. The shell writes an entry marker in its disposable Unicode
+workdir. It still executes the real PowerShell command, validates Unicode output,
+and keeps its 60-second deadline. No process implementation or production
+deadline changes are part of these diagnostic assertions. The complete workflow
+module passes locally on both runtimes; hosted evidence is needed to locate a
+recurrence before attributing it to process creation or PowerShell itself.
+
 ## Repeating the synthetic diagnostic
 
 From the repository root, using the desired Python interpreter:

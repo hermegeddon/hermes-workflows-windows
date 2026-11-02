@@ -410,6 +410,8 @@ class WorkflowTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "Windows shells")
     def test_native_cmd_powershell_and_unicode_workdir(self):
+        from hermes_workflows.process_launch import ProcessLaunch
+
         runtime = self.runtime().start()
         for shell, command in (
             ("cmd", 'echo hello> "result.txt"'),
@@ -417,6 +419,8 @@ class WorkflowTests(unittest.TestCase):
         ):
             workdir = self.root / (shell + " space żółć")
             workdir.mkdir()
+            if shell == "powershell":
+                command = "[IO.File]::WriteAllText('entered-shell.txt','entered'); " + command
             wf = workflow(
                 [
                     {
@@ -430,11 +434,41 @@ class WorkflowTests(unittest.TestCase):
                 ],
                 id=shell,
             )
-            state = runtime.engine.start(wf)
-            # Clean hosted Windows images can pay a substantial first-start
-            # PowerShell/.NET cost. Keep production deadlines unchanged while
-            # allowing this actual-shell integration check to finish.
-            result = self.wait(state["run_id"], timeout=65)
+            started = time.monotonic()
+            phases, processes = {}, []
+            original_start, original_popen = ProcessLaunch.start, subprocess.Popen.__init__
+
+            def phase(name, phases=phases, started=started):
+                phases[name] = round((time.monotonic() - started) * 1000, 3)
+
+            def traced_popen(process, *args, original_popen=original_popen,
+                             processes=processes, phase=phase, **kwargs):
+                phase("create_begin_ms")
+                original_popen(process, *args, **kwargs)
+                processes.append(process)
+                phase("create_returned_ms")
+
+            def traced_start(owner, *args, original_start=original_start, phase=phase, **kwargs):
+                phase("launch_thread_entered_ms")
+                original_start(owner, *args, **kwargs)
+                phase("assigned_and_resumed_ms")
+
+            with patch.object(ProcessLaunch, "start", traced_start), patch.object(
+                subprocess.Popen, "__init__", traced_popen
+            ):
+                try:
+                    state = runtime.engine.start(wf)
+                    # Keep the actual shell deadline intact. Timing diagnostics
+                    # distinguish OS launch from shell startup if CI times out.
+                    result = self.wait(state["run_id"], timeout=65)
+                finally:
+                    print("Native shell diagnostic: " + json.dumps({
+                        "shell": shell, "phases": dict(phases),
+                        "shell_entered": (workdir / "entered-shell.txt").exists(),
+                        "result_written": (workdir / "result.txt").exists(),
+                        "children": [{"pid": p.pid, "returncode": p.poll()} for p in processes],
+                        "elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+                    }))
             self.assertEqual(result["status"], "completed", result)
             print(f"Native {shell}: {result['nodes']['script']['telemetry']['duration_ms']} ms")
             text = (workdir / "result.txt").read_text(encoding="utf-8-sig").strip()
