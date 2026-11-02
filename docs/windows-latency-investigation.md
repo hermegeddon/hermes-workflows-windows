@@ -247,6 +247,32 @@ The resulting matrix contains eight Python jobs plus two frontend jobs. There
 were no branch-protection check contexts or repository rulesets to migrate when
 the Python job names changed.
 
+### CLI persistence and cold PowerShell remain separate checks
+
+CI `41468686980` on `f1bcc79` completed all ten jobs within their independent
+budgets. Both frontends, all four Linux lanes and Windows 3.11 adapters passed;
+the other three Windows lanes failed only the CLI review-persistence fixture.
+The loop correction passed in every Windows lane. The failing fixture's
+PowerShell step reached its 60-second execution deadline before review. Separate
+native PowerShell integration checks passed on those runners, with the standalone
+measurement taking 27–33 seconds. These observations do not establish a cause for
+the intermittent cold-shell delay.
+
+The CLI fixture now adapts only its temporary copy of the smoke example to a
+real native `cmd` command. It checks the command's output before approval and
+asserts that the entire persisted step result survives approval in a different
+CLI process, alongside the existing decision/note checks and Unicode temporary
+home. The example itself and production deadlines are unchanged; its original
+15-second step budget is retained. Dedicated PowerShell, Unicode, environment
+allowlist and exit-code integration coverage remains required in the full suite.
+Beads `.34.10` tracks this correction and exact-head hosted qualification.
+
+The complete 26-test workflow module passes on Python 3.11 and 3.14. An isolated
+child-process guard rejects any PowerShell launch while observing the real
+`cmd.exe` subprocess. Evidence is retained in `cli-persistence-module*.log` and
+`cli-persistence-guard*.log` under `.cache/release-checks/`. This fixture correction
+does not claim to fix historical cold PowerShell startup delays.
+
 ## Repeating the synthetic diagnostic
 
 From the repository root, using the desired Python interpreter:

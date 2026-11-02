@@ -549,20 +549,23 @@ class WorkflowTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             return json.loads(result.stdout)
 
-        # This tests process lifetime/review persistence, not a cold shell's
-        # startup speed. Adapt only the isolated fixture's execution budget.
+        # Exercise CLI lifetime/review persistence with a real native shell.
+        # PowerShell startup, Unicode output and exit codes have separate tests.
         smoke = json.loads((PLUGIN / "examples/windows-smoke.workflow.json").read_text("utf-8"))
-        smoke["nodes"][0]["timeout_seconds"] = 60
+        smoke["nodes"][0].update(shell="cmd", command="echo CLI persistence passed")
         smoke_path = self.root / "hosted-smoke.workflow.json"
         smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
         cli("import", str(smoke_path))
         waiting = cli("run", "windows-smoke")
         self.assertEqual(waiting["status"], "waiting")
+        self.assertEqual(waiting["nodes"]["hello"]["outcome"], "success")
+        self.assertEqual(waiting["nodes"]["hello"]["output"].strip(), "CLI persistence passed")
         done = cli(
             "review", waiting["run_id"], "review", "approved", "--note", "CLI restart passed"
         )
         self.assertEqual(done["status"], "completed")
         self.assertEqual(done["nodes"]["review"]["review_note"], "CLI restart passed")
+        self.assertEqual(done["nodes"]["hello"], waiting["nodes"]["hello"])
 
     def test_installer_copy_and_refuse_overwrite(self):
         spec = importlib.util.spec_from_file_location("workflow_installer", PLUGIN / "install.py")
