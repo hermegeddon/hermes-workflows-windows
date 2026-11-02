@@ -183,6 +183,35 @@ Live evidence is retained under ignored `.cache/release-checks/latency-live/`:
 `web-completed.png`, `desktop-completed.png` and `web-cancelled.png`.
 Fresh transport evidence is `latency-gateway-post-restart.json` and its log.
 
+### Publication CI exposed another fixture timing limit
+
+CI `41459085866` on the published process fix `caa114f` passed five jobs and
+the Windows 3.11 standard-library suite. The optional Windows 3.11 suite failed
+only `test_parallel_fan_in_prompt_mapping_and_params` at its existing eight-second
+wait. Its diagnostics show the prompt and all three agent steps completed,
+with the final finish node pending at the snapshot; the trace subsequently
+records completion 9.736 seconds after run creation. That runner also measured
+native PowerShell at 24062 ms. This is further timing evidence, not proof that
+process creation and SQLite delays share a cause.
+
+A controlled 650 ms delay per `Database.mutate_run` reproduced the old failure
+locally: 13 mutations, all fan-in work completed, final settlement outside the
+eight-second fixture budget. The corrected test uses an event barrier to prove
+both parallel steps enter before either returns, replacing fixed 80/180 ms
+sleeps. Only that test's final-result wait gets a bounded 30-second allowance;
+the shared eight-second readiness helper and production deadlines stay intact.
+All original fan-in, prompt, parameter, mapping and token assertions remain.
+
+With the same controlled slowdown, the corrected test passes in 8.578 seconds
+on Python 3.11 and 8.721 seconds on Python 3.14. A negative control forcing
+serial execution is rejected on both runtimes. The complete workflow test
+module passes all 26 tests on each runtime (one optional skip on 3.14).
+Beads `.34.6` tracks the test-only correction and fresh full-suite/hosted
+qualification; this does not close the broader historical-delay investigation.
+Evidence: `fan-in-before.log`, `fan-in-after311.log`, `fan-in-after314.log`,
+`fan-in-serial311.log`, `fan-in-serial314.log`, `fan-in-module311.log` and
+`fan-in-module314.log` under `.cache/release-checks/`.
+
 ## Repeating the synthetic diagnostic
 
 From the repository root, using the desired Python interpreter:

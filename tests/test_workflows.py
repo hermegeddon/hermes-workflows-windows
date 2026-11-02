@@ -113,6 +113,7 @@ class WorkflowTests(unittest.TestCase):
     def test_parallel_fan_in_prompt_mapping_and_params(self):
         completed, prompts = [], {}
         running, peak = 0, 0
+        parallel_ready = asyncio.Event()
 
         async def runner(node, run):
             nonlocal running, peak
@@ -121,8 +122,13 @@ class WorkflowTests(unittest.TestCase):
             prompts[node["id"]] = node["prompt"]
             if node["id"] == "join":
                 self.assertEqual(set(completed), {"a", "b"})
-            await asyncio.sleep(0.08 if node["id"] != "b" else 0.18)
-            running -= 1
+            try:
+                if node["id"] in ("a", "b"):
+                    if running == 2:
+                        parallel_ready.set()
+                    await asyncio.wait_for(parallel_ready.wait(), 15)
+            finally:
+                running -= 1
             completed.append(node["id"])
             return Result(output=json.dumps({"value": node["id"]}), telemetry={"total_tokens": 7})
 
@@ -149,7 +155,9 @@ class WorkflowTests(unittest.TestCase):
         wf["params"] = [{"name": "topic", "type": "text", "label": "Topic"}]
         runtime = self.runtime(runner).start()
         state = runtime.engine.start(wf, input="Operator priority", params={"topic": "żółć"})
-        result = self.wait(state["run_id"])
+        # SQLite work can outlast the readiness budget on loaded Windows CI.
+        # The barrier proves overlap; this deadline only bounds final settlement.
+        result = self.wait(state["run_id"], timeout=30)
         self.assertEqual(result["status"], "completed")
         self.assertEqual(peak, 2)
         self.assertIn("Authored żółć", prompts["join"])
