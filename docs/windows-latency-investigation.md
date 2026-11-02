@@ -320,6 +320,22 @@ timings qualify whether that selection removes the discovery-sensitive fixture
 delay (`.34.13`). User scripts, examples, runtime environment handling and runner
 security settings are unchanged; this does not rewrite arbitrary user commands.
 
+CI `41483427158` on `49e2ef1` passes all ten jobs. Fresh Windows runners show
+the following before/after measurements for the same real cmdlets:
+
+| Python / suite | Unqualified `Set-Content` | Module-qualified `Set-Content` | Qualified PowerShell step |
+| --- | ---: | ---: | ---: |
+| 3.11 / stdlib | 30.56 s | 0.43 s | 1.17 s |
+| 3.11 / adapters | 32.38 s | 0.45 s | 1.17 s |
+| 3.14 / stdlib | 31.16 s | 0.54 s | 1.21 s |
+| 3.14 / adapters | 33.04 s | 0.46 s | 1.20 s |
+
+Cmdlet durations are measured between script-body entry and the marker after
+`Set-Content`; step durations come from executor telemetry. This comparison
+strongly supports command discovery as the source of that fixture cost. It does
+not prove that every historical Windows delay had the same cause. The real
+60-second step deadlines and all PowerShell behavior assertions remain required.
+
 ### Dashboard-only secondary-profile router caches
 
 Initial live deployment of `e8f6bfd` reproduced a missing lifecycle case (`.34.12`):
@@ -355,6 +371,12 @@ credential-file bytes, workflow settings, run/attempt history and all seven
 pre-existing Hermes edits match their pre-deployment fingerprints. The memory
 extension remains isolated. No model or memory calls were made. Evidence:
 `asgi-deployment/live-reload-v2.json` and `verified-v2.json`.
+
+Process freshness also needs verification: starting a dashboard helper can attach
+to an older shared server. The final owner check found that case; the old shared
+server was refreshed separately while preserving the new gateway. The replacement
+serve process was created after the host deployment and binds the original
+authenticated loopback port. Web/Desktop smoke checks use that refreshed owner.
 
 Rollback preserves local edits: revert the dedicated host commits in reverse
 order (`9f68f20`, `f019a0404b`, `e8f6bfd`), then use the guarded gateway restart
