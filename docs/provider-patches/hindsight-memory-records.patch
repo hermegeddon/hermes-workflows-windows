@@ -1,0 +1,308 @@
+--- a/hindsight-integrations/hermes/__init__.py
++++ b/hindsight-integrations/hermes/__init__.py
+@@ -31,6 +31,7 @@
+ from hermes_time import now as _hermes_now
+ from tools.registry import tool_error
+ from utils import read_json_or_empty
++from .records import RecordWriterMixin
+ 
+ from .embedded import (
+     _RETRIABLE_CONNECTION_MARKERS,
+@@ -472,7 +473,7 @@
+ }
+ 
+ 
+-class HindsightMemoryProvider(MemoryProvider):
++class HindsightMemoryProvider(RecordWriterMixin, MemoryProvider):
+     """Hindsight long-term memory with knowledge graph and multi-strategy retrieval."""
+ 
+     # Each server-side op status poll is a round trip — coarser than the 0.05s queue poll.
+--- /dev/null
++++ b/hindsight-integrations/hermes/records.py
+@@ -0,0 +1,97 @@
++"""Optional explicit-record capability; conversation capture remains unchanged."""
++
++from __future__ import annotations
++
++import asyncio
++import hashlib
++import json
++import math
++import re
++import time
++
++
++class RecordWriterMixin:
++    def record_capabilities(self):
++        # The existing context-only mode does not permit explicit writes.
++        return {"write": self._memory_mode != "context", "lookup": False, "idempotency": False}
++
++    def _record_target(self):
++        if not self.record_capabilities()["write"] or self._shutting_down.is_set():
++            return "", ()
++        banks = tuple(self._write_bank_ids)
++        identity = [
++            self._mode, self._api_url,
++            hashlib.sha256(str(self._api_key or "").encode()).hexdigest(),
++            banks, self._memory_mode, self._retain_async, self._retain_strategy,
++            self._retain_tags, self._observation_scopes,
++        ]
++        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest(), banks
++
++    def record_destination(self):
++        return self._record_target()[0]
++
++    def write_record(self, record, *, effect_id, expected_destination, timeout):
++        if (
++            not isinstance(record, dict)
++            or not isinstance(effect_id, str)
++            or not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", effect_id)
++            or isinstance(timeout, bool)
++            or not isinstance(timeout, (int, float))
++            or not math.isfinite(timeout)
++            or not 0 < timeout <= 30
++        ):
++            return {"status": "failed", "reason": "invalid_record_request"}
++        # Capture the exact bank tuple used to compute the acceptance binding.
++        # A session switch cannot substitute a new tuple during dispatch.
++        token, banks = self._record_target()
++        if not token or token != expected_destination:
++            return {"status": "failed", "reason": "destination_changed"}
++        deadline = time.monotonic() + timeout
++        item = self._build_retain_kwargs(
++            json.dumps(record, sort_keys=True, ensure_ascii=False),
++            context="Explicit Hermes record",
++            metadata={"source": self._retain_source, "client_record_id": effect_id},
++        )
++        client = self._get_client()
++        if time.monotonic() >= deadline:
++            return {"status": "failed", "reason": "deadline_before_acceptance"}
++
++        async def deliver():
++            queued = bool(self._retain_async)
++            for bank in banks:
++                remaining = deadline - time.monotonic()
++                if remaining <= 0:
++                    raise TimeoutError("record deadline")
++                # Do not use the embedded reconnect/retry wrapper: an ambiguous
++                # POST may already have written and must never be blindly replayed.
++                response = await asyncio.wait_for(client.aretain_batch(
++                    bank_id=bank, items=[item], document_id=f"hermes-record-{effect_id}",
++                    retain_async=self._retain_async,
++                ), remaining)
++                if getattr(response, "success", None) is False:
++                    return {"status": "unknown", "reason": "retain_unconfirmed"}
++                queued = queued or bool(getattr(response, "operation_id", None)) or bool(
++                    getattr(response, "operation_ids", None)
++                )
++            return {"status": "queued" if queued else "acknowledged"}
++
++        from agent.async_utils import safe_schedule_threadsafe
++        from . import _get_loop
++
++        loop = _get_loop()
++        operation = deliver()
++        future = safe_schedule_threadsafe(operation, loop)
++        if future is None:
++            operation.close()
++            return {"status": "failed", "reason": "writer_unavailable"}
++        try:
++            return future.result(timeout=max(0, deadline - time.monotonic()))
++        except Exception:
++            # Cancels pending awaits/bank sends. An accepted server write can
++            # still complete: unknown is deliberate, not permission to resend.
++            future.cancel()
++            return {"status": "unknown", "reason": "retain_unconfirmed"}
++
++    def lookup_record(self, *, effect_id, expected_destination, timeout):
++        # The existing public API has no durable lookup by client effect id.
++        return {"status": "unknown", "reason": "lookup_unsupported"}
+--- a/hindsight-integrations/hermes/README.md
++++ b/hindsight-integrations/hermes/README.md
+@@ -496,3 +496,20 @@
+   `_prompt`, ...). Those are Hermes internals, not a public API — expect to own a copy or drop
+   the wizard hook if they move.
+ - `pyproject.toml` is the only dependency authority; bump it when a newer client is needed.
++# Optional explicit record writer
++
++This local contribution adds the optional Hermes record-write interface. It
++requires a host with that capability and explicit plugin consent; installing
++the provider patch alone does not activate workflow writes.
++
++The writer uses the provider's existing initialized endpoint, credentials,
++resolved write-bank set, retain tags and extraction strategy. Context-only mode
++opts out. Normal conversation capture, recall and built-in-memory mirroring keep
++their existing behavior. No new model summarizer is involved.
++
++Async retain returns `queued`; synchronous successful retain returns
++`acknowledged`. Partial writes, transport failures and deadlines return `unknown`
++and are never automatically repeated. The capability declares no durable client-ID
++deduplication or receipt lookup, and never claims recall visibility. Existing
++configured mirror banks remain part of the destination; partial fanout requires
++operator reconciliation. The binding is a digest, not a credential or bank label.
+--- a/hindsight-integrations/hermes/tests/conftest.py
++++ b/hindsight-integrations/hermes/tests/conftest.py
+@@ -130,13 +130,16 @@
+     )
+ 
+ 
+-@pytest.fixture
++@pytest.fixture(autouse=True)
+ def hermes_env(tmp_path, monkeypatch):
+     """Fresh Hermes home, empty secret store, plugin module loaded against them."""
+     SECRETS.clear()
+     # The plugin binds `get_hermes_home` at import time, so patch it where it is used.
+     monkeypatch.setattr(sys.modules["hindsight_hermes"], "get_hermes_home", lambda: tmp_path)
+     monkeypatch.setenv("HOME", str(tmp_path))
++    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
++    monkeypatch.setenv("USERPROFILE", str(tmp_path))
++    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+     for var in list(__import__("os").environ):
+         if var.startswith("HINDSIGHT_"):
+             monkeypatch.delenv(var, raising=False)
+--- a/hindsight-integrations/hermes/tests/test_local_runtime.py
++++ b/hindsight-integrations/hermes/tests/test_local_runtime.py
+@@ -8,6 +8,7 @@
+ """
+ 
+ import json
++import os
+ import sys
+ from pathlib import Path
+ from types import SimpleNamespace
+@@ -215,10 +216,11 @@
+ 
+ def test_the_helper_finds_the_uvx_hermes_installed_when_path_has_none(tmp_path, monkeypatch):
+     """#5192: a package-manager Hermes keeps uvx under ~/.hermes/tools/uv-*/, off PATH."""
+-    uv_dir = tmp_path / ".hermes" / "tools" / "uv-0.12.3-darwin-arm64"
++    uv_dir = tmp_path / ".hermes" / "tools" / "uv-test"
+     uv_dir.mkdir(parents=True)
+-    (uv_dir / "uvx").write_text("#!/bin/sh\n")
+-    (uv_dir / "uvx").chmod(0o755)
++    executable = uv_dir / ("uvx.exe" if os.name == "nt" else "uvx")
++    executable.write_text("#!/bin/sh\n")
++    executable.chmod(0o755)
+     monkeypatch.setattr(embedded.Path, "home", lambda: tmp_path)
+ 
+     assert embedded._managed_uvx_dir(str(tmp_path / "empty")) == str(uv_dir)
+--- /dev/null
++++ b/hindsight-integrations/hermes/tests/test_records.py
+@@ -0,0 +1,118 @@
++"""The actual provider's optional record interface with an injected SDK only."""
++
++import asyncio
++import json
++from types import SimpleNamespace
++
++import pytest
++
++from conftest import FakeClient
++
++
++def write(instance, **changes):
++    return instance.write_record(
++        {"kind": "run_completed", "status": "completed"},
++        effect_id="effect-1", expected_destination=instance.record_destination(),
++        timeout=changes.get("timeout", 2),
++    )
++
++
++def test_explicit_async_record_is_queued_without_a_conversation_or_recall(provider):
++    instance, client = provider({"bank_id": "owner", "retain_tags": "configured-tag", "auto_retain": False})
++    try:
++        assert instance.record_capabilities() == {"write": True, "lookup": False, "idempotency": False}
++        assert write(instance) == {"status": "queued"}
++        assert len(client.retains) == 1
++        call = client.retains[0]
++        assert call["bank_id"] == "owner"
++        assert call["document_id"] == "hermes-record-effect-1"
++        item = call["items"][0]
++        assert json.loads(item["content"]) == {"kind": "run_completed", "status": "completed"}
++        assert "configured-tag" in item["tags"]
++        assert item["metadata"]["client_record_id"] == "effect-1"
++        assert instance._session_turns == []
++        assert not client.recalls and not client.reflects
++    finally:
++        instance.shutdown()
++
++
++def test_synchronous_success_is_durable_and_all_existing_write_banks_are_preserved(provider):
++    instance, client = provider({"bank_id": "primary", "additional_banks": ["mirror"], "retain_async": False})
++    try:
++        assert write(instance) == {"status": "acknowledged"}
++        assert [call["bank_id"] for call in client.retains] == ["primary", "mirror"]
++    finally:
++        instance.shutdown()
++
++
++def test_changed_bank_or_key_rejects_the_original_binding(provider):
++    instance, client = provider({"bank_id": "original"})
++    try:
++        original = instance.record_destination()
++        instance._write_bank_ids = ["changed"]
++        assert instance.write_record({}, effect_id="e", expected_destination=original, timeout=2)["status"] == "failed"
++        assert client.retains == []
++        changed = instance.record_destination()
++        instance._api_key = "different-tenant"
++        assert instance.record_destination() != changed
++    finally:
++        instance.shutdown()
++
++
++def test_context_only_and_shutdown_instances_cannot_accept_records(provider):
++    instance, client = provider({"memory_mode": "context"})
++    assert instance.record_capabilities()["write"] is False
++    assert instance.record_destination() == ""
++    assert write(instance)["status"] == "failed"
++    instance.shutdown()
++    assert write(instance)["status"] == "failed"
++    assert client.retains == []
++
++
++def test_partial_multi_bank_failure_is_unknown_and_never_retried(provider):
++    class Partial(FakeClient):
++        async def aretain_batch(self, **kwargs):
++            self.retains.append(kwargs)
++            if len(self.retains) == 2:
++                raise ConnectionError("cannot connect to host")
++            return SimpleNamespace()
++    instance, client = provider({"bank_id": "primary", "additional_banks": ["mirror"]}, client=Partial())
++    try:
++        assert write(instance)["status"] == "unknown"
++        assert [call["bank_id"] for call in client.retains] == ["primary", "mirror"]
++        assert instance.lookup_record(effect_id="effect-1", expected_destination=instance.record_destination(), timeout=2)["status"] == "unknown"
++        assert len(client.retains) == 2
++    finally:
++        instance.shutdown()
++
++
++def test_timeout_after_acceptance_is_unknown_and_cancels_pending_sdk_work(provider):
++    class Slow(FakeClient):
++        cancelled = False
++        async def aretain_batch(self, **kwargs):
++            self.retains.append(kwargs)
++            try:
++                await asyncio.Event().wait()
++            except asyncio.CancelledError:
++                self.cancelled = True
++                raise
++    instance, client = provider({}, client=Slow())
++    try:
++        assert write(instance, timeout=2)["status"] == "unknown"
++        assert len(client.retains) == 1
++        # The provider-side operation is read-only on reconciliation.
++        assert instance.lookup_record(effect_id="effect-1", expected_destination=instance.record_destination(), timeout=2)["reason"] == "lookup_unsupported"
++        assert len(client.retains) == 1
++    finally:
++        instance.shutdown()
++    assert client.cancelled
++
++
++@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf"), True, 31])
++def test_invalid_deadline_never_dispatches(provider, timeout):
++    instance, client = provider({})
++    try:
++        assert write(instance, timeout=timeout)["status"] == "failed"
++        assert client.retains == []
++    finally:
++        instance.shutdown()

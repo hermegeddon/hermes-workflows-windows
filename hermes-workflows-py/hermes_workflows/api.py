@@ -36,6 +36,8 @@ ROUTES = [
     ("GET", "/runs/{run_id}"),
     ("GET", "/runs/{run_id}/attempts"),
     ("GET", "/runs/{run_id}/notifications"),
+    ("GET", "/runs/{run_id}/memory"),
+    ("POST", "/runs/{run_id}/memory/{effect_id}/reconcile"),
     ("POST", "/runs/{run_id}/notifications/{notice_id}/reconcile"),
     ("GET", "/runs/{run_id}/export"),
     ("POST", "/runs/{run_id}/review"),
@@ -53,6 +55,7 @@ ROUTES = [
     ("PUT", "/settings"),
     ("GET", "/profiles"),
     ("GET", "/o2b-status"),
+    ("GET", "/memory-status"),
 ]
 
 
@@ -101,9 +104,19 @@ class API:
         db, store, engine = runtime.db, runtime.specs, runtime.engine
         if path == "/settings":
             if method == "GET":
-                return {"values": settings.values(db), "schema": settings.schema(db)}
+                return {
+                    "values": settings.values(db),
+                    "schema": settings.schema(db),
+                    "memory": runtime.memory.status(),
+                }
             if method == "PUT":
-                return {"values": settings.save(db, payload), "schema": settings.schema(db)}
+                return {
+                    "values": settings.save(db, payload),
+                    "schema": settings.schema(db),
+                    "memory": runtime.memory.status(),
+                }
+        if path == "/memory-status" and method == "GET":
+            return runtime.memory.status()
         if path == "/o2b-status" and method == "GET":
             installed = shutil.which("o2b") is not None
             return {
@@ -191,9 +204,13 @@ class API:
             if action == "validate" and method == "POST":
                 return validate(wf)
             if action == "compile-preview" and method == "POST":
-                return compile_preview(
-                    wf, mode=settings.values(db)["default_mode"], project_id=payload.get("project_id")
+                plan = compile_preview(
+                    wf,
+                    mode=settings.values(db)["default_mode"],
+                    project_id=payload.get("project_id"),
                 )
+                plan["native_memory"] = runtime.memory.preview(wf)
+                return plan
             if action == "run" and method == "POST":
                 state = engine.start(
                     wf,
@@ -224,6 +241,14 @@ class API:
         if (
             len(bits) == 5
             and bits[0] == "runs"
+            and bits[2] == "memory"
+            and bits[4] == "reconcile"
+            and method == "POST"
+        ):
+            return asyncio.run(runtime.memory.reconcile(bits[1], bits[3]))
+        if (
+            len(bits) == 5
+            and bits[0] == "runs"
             and bits[2] == "notifications"
             and bits[4] == "reconcile"
             and method == "POST"
@@ -246,6 +271,11 @@ class API:
                 return {"attempts": redact(db.attempts(run_id))}
             if action == "notifications" and method == "GET":
                 return {"notifications": runtime.notifications.records(run_id)}
+            if action == "memory" and method == "GET":
+                return {
+                    "memory": state.get("memory_export"),
+                    "effects": runtime.memory.records(run_id),
+                }
             if not action and method == "GET":
                 # Use this run's immutable spec, rather than a subsequently
                 # edited workflow, to describe the gate's allowed decisions.

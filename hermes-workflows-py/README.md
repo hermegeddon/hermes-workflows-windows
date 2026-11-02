@@ -789,3 +789,7 @@ limits, and an expected response marker; only the marker and usage metadata are
 reported on success. A real default-provider request has completed successfully.
 Rendering and authenticated interactions in the user's running dashboard remain
 a separate manual end-to-end check.
+
+Optional native workflow-memory records use the existing Hermes provider through
+a consented host interface. They default to disabled and require the prepared
+host/provider extensions; see [policy and delivery semantics](../docs/workflow-memory.md).

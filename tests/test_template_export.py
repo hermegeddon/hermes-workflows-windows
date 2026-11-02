@@ -85,6 +85,16 @@ class TemplateExportTests(unittest.TestCase):
         self.assertEqual(bundle["version"]["generation"]["model"], None)
         self.assertEqual(bundle, build_bundle(wf, generated_at=AT))
 
+    def test_native_memory_extension_survives_export_without_rewriting_legacy_selection(self):
+        wf = source()
+        wf["defaults"]["memory"] = {"provider": "none"}
+        wf["defaults"]["workflow_memory"] = {"provider": "hermes", "enabled": True}
+        bundle = build_bundle(wf, generated_at=AT)
+        exported = json.loads(bundle["yaml"])
+        self.assertEqual(exported["defaults"]["memory"], {"provider": "none"})
+        self.assertEqual(exported["defaults"]["workflow_memory"], wf["defaults"]["workflow_memory"])
+        self.assertIn("upstream TypeScript backend does not implement", bundle["md"])
+
     def test_adapted_template_imports_without_yaml_dependency(self):
         document = json.loads(build_bundle(source(), generated_at=AT)["yaml"])
         document.pop("template")

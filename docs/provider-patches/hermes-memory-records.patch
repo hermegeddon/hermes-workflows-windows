@@ -1,0 +1,812 @@
+diff --git a/agent/memory_provider.py b/agent/memory_provider.py
+index c997046608..87904d527d 100644
+--- a/agent/memory_provider.py
++++ b/agent/memory_provider.py
+@@ -125,6 +125,8 @@ class MemoryProvider(ABC):
+         ``~/.hermes``) and ``platform``; may include ``agent_context`` ("primary" |
+         "subagent" | "cron" | "flush" — skip writes for non-primary contexts),
+         ``agent_identity``, ``agent_workspace``, ``parent_session_id``, ``user_id``, ``user_id_alt``.
++        Explicit record writers use ``agent_context="workflow"`` (manual) or
++        ``"cron"`` (scheduled), without conversation hooks or fabricated turns.
+         """
+ 
+     def unavailable_reason(self) -> str:
+@@ -223,3 +225,40 @@ class MemoryProvider(ABC):
+         """Absolute paths of provider state OUTSIDE HERMES_HOME for ``hermes backup``/``import``
+         (paths outside the home dir are skipped). MUST work without ``initialize()`` or network."""
+         return []
++
++    # Optional explicit record writes. Separate from conversation capture and
++    # built-in-memory mirroring; unsupported providers stay inert on upgrade.
++    def record_capabilities(self) -> dict[str, Any]:
++        """Pure feature description: no network, initialization or secret reads.
++
++        ``write`` opts in; ``lookup`` permits read-only receipt reconciliation;
++        ``idempotency`` declares durable deduplication by client effect id.
++        None of these implies recall visibility or live provider health.
++        """
++        return {"write": False, "lookup": False, "idempotency": False}
++
++    def record_destination(self) -> str:
++        """Non-secret SHA-256 binding of the initialized writer's actual destination.
++
++        Include endpoint/tenant/write-bank routing and identity-sensitive policy.
++        The binding must change when writes could reach a different destination.
++        Keep that destination pinned for this instance's lifetime.
++        """
++        return ""
++
++    def write_record(self, record: dict[str, Any], *, effect_id: str,
++                     expected_destination: str, timeout: float) -> dict[str, Any]:
++        """Accept one redacted, explicit record at the expected pinned destination.
++
++        Validate expected_destination atomically with acceptance; enforce timeout.
++        Return status queued | acknowledged (durable) | failed | unknown, optionally
++        receipt_id. Never infer durable storage or search visibility from queuing.
++        Unknown deliveries must not be silently retried. Providers without durable
++        client-id deduplication leave record_capabilities()['idempotency'] false.
++        """
++        return {"status": "failed", "reason": "capability_unavailable"}
++
++    def lookup_record(self, *, effect_id: str, expected_destination: str,
++                      timeout: float) -> dict[str, Any]:
++        """Read-only receipt lookup, never a resend or a destination change."""
++        return {"status": "unknown", "reason": "lookup_unsupported"}
+diff --git a/hermes_cli/plugin_capabilities.py b/hermes_cli/plugin_capabilities.py
+index b10c867350..fc2f34e4ed 100644
+--- a/hermes_cli/plugin_capabilities.py
++++ b/hermes_cli/plugin_capabilities.py
+@@ -47,6 +47,10 @@ _CAPABILITY_ROWS = (
+     ("llm.side_question", (),
+      "Ask your agent a short question after each turn. It sees the "
+      "whole session, including memory, and spends your main model's tokens."),
++    ("memory.write_records", (),
++     "Store explicit records in this profile's selected memory provider; separate from automatic conversation memory."),
++    ("memory.write_scheduled_records", (),
++     "Also store explicit records from scheduled jobs in this profile's selected memory provider."),
+     ("gateway.platform_actions", ("allow_platform_actions",),
+      "Act on connected chat platforms as the gateway bot "
+      "(add reactions, rename threads) via ctx.platform_actions"))
+diff --git a/hermes_cli/plugin_memory_records.py b/hermes_cli/plugin_memory_records.py
+new file mode 100644
+index 0000000000..34881459fe
+--- /dev/null
++++ b/hermes_cli/plugin_memory_records.py
+@@ -0,0 +1,240 @@
++"""Host-owned, consented record writes through the selected memory provider.
++
++Public headless companion to PluginContext's memory-record methods. No agent,
++model call, native-memory write or provider-specific tool guessing is involved.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import math
++import re
++import threading
++import time
++from pathlib import Path
++from typing import Any
++
++CAPABILITY = "memory.write_records"
++SCHEDULED_CAPABILITY = "memory.write_scheduled_records"
++_LOCK = threading.Lock()
++_ACTIVE: set[tuple[str, str]] = set()
++
++
++def _config(home: Path) -> dict:
++    from hermes_cli.config import load_config_readonly
++    from hermes_cli.plugins_loader import _plugin_home_scope
++
++    with _plugin_home_scope(home):
++        return load_config_readonly() or {}
++
++
++def _selection(config: dict) -> str:
++    from agent.memory_provider import is_core_memory_provider
++
++    name = str(config.get("memory", {}).get("provider") or "").strip()
++    return "" if is_core_memory_provider(name) else name
++
++
++def _consented(config: dict, plugin_id: str, capability=CAPABILITY) -> bool:
++    from hermes_cli.plugin_capabilities import plugin_capability_granted
++
++    return plugin_capability_granted(plugin_id, capability, config=config)
++
++
++def _context(context: dict) -> dict:
++    fields = {"session_id", "cwd", "platform", "user_id", "user_id_alt", "parent_session_id", "scheduled"}
++    if not isinstance(context, dict) or set(context) - fields:
++        raise ValueError("invalid memory record context")
++    session = context.get("session_id")
++    scheduled = context.get("scheduled", False)
++    if not isinstance(session, str) or not session or len(session) > 512:
++        raise ValueError("memory record context requires a session id")
++    if type(scheduled) is not bool:
++        raise ValueError("invalid memory record context fields")
++    result = {"session_id": session, "scheduled": scheduled}
++    for field in ("cwd", "platform", "user_id", "user_id_alt", "parent_session_id"):
++        value = context.get(field, "workflow" if field == "platform" else "")
++        if not isinstance(value, str) or len(value) > (4096 if field == "cwd" else 512):
++            raise ValueError("invalid memory record context fields")
++        result[field] = value
++    return result
++
++
++def _capabilities(provider) -> dict:
++    raw = provider.record_capabilities()
++    if not isinstance(raw, dict):
++        return {"write": False, "lookup": False, "idempotency": False}
++    return {key: raw.get(key) is True for key in ("write", "lookup", "idempotency")}
++
++
++def _receipt(raw: Any) -> dict:
++    if not isinstance(raw, dict) or raw.get("status") not in {"queued", "acknowledged", "failed", "unknown"}:
++        return {"status": "unknown", "reason": "malformed_receipt"}
++    result = {"status": raw["status"]}
++    identity = raw.get("receipt_id")
++    if isinstance(identity, str) and 0 < len(identity) <= 256:
++        from agent.memory_manager import _redact_for_provider
++        result["receipt_id"] = _redact_for_provider(identity)
++    return result
++
++
++class MemoryRecordClient:
++    """One immutable owner profile/plugin pair; caller-supplied homes never cross ctx RPC.
++
++    Timed-out work retains its slot until cleanup ends. A second call cannot
++    multiply stalled writers. The caller owns durable intent and reconciliation.
++    """
++
++    def __init__(self, home: Path, plugin_id: str):
++        self.home = Path(home).resolve()
++        self.plugin_id = plugin_id
++
++    def status(self) -> dict:
++        """Read configuration only; do not load/initialize a provider or fetch its secrets."""
++        config = _config(self.home)
++        return {"api_version": 1, "provider": _selection(config) or None,
++                "consented": _consented(config, self.plugin_id), "provider_support": "unprobed"}
++
++    def describe(self, context: dict, *, timeout: float = 5) -> dict:
++        return self._call("describe", _context(context), timeout=timeout)
++
++    def write(self, record: dict, *, context: dict, effect_id: str,
++              expected_destination: dict, timeout: float = 5) -> dict:
++        encoded = json.dumps(record)
++        if not isinstance(record, dict) or len(encoded.encode()) > 32768:
++            raise ValueError("memory record must be an object of at most 32768 bytes")
++        if not isinstance(effect_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.:-]{1,128}", effect_id):
++            raise ValueError("invalid memory record effect identity")
++        return self._call("write", _context(context), timeout=timeout, record=json.loads(encoded),
++                          effect_id=effect_id, expected_destination=dict(expected_destination))
++
++    def lookup(self, *, context: dict, effect_id: str, expected_destination: dict,
++               timeout: float = 5) -> dict:
++        return self._call("lookup", _context(context), timeout=timeout, effect_id=effect_id,
++                          expected_destination=dict(expected_destination))
++
++    def _call(self, operation, context, *, timeout, **arguments):
++        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 < timeout <= 30:
++            raise ValueError("memory record deadline must be positive and at most 30 seconds")
++        from hermes_constants import hermes_home_key
++
++        key = (hermes_home_key(self.home), self.plugin_id)
++        with _LOCK:
++            if key in _ACTIVE:
++                return {"status": "unavailable", "reason": "writer_busy"}
++            _ACTIVE.add(key)
++        finished = threading.Event()
++        result = []
++        deadline = time.monotonic() + timeout
++
++        def work():
++            try:
++                result.append(self._invoke(operation, context, deadline, arguments))
++            except (Exception, SystemExit):  # health: allow BLE001 -- provider boundary must not leak credential-bearing exception text
++                result.append({"status": "unknown" if operation == "write" else "unavailable",
++                               "reason": "provider_call_unconfirmed"})
++            finally:
++                with _LOCK:
++                    _ACTIVE.discard(key)
++                finished.set()
++
++        from agent.memory_provider import spawn_context_thread
++
++        worker = spawn_context_thread(work, name="memory-record-writer")
++        try:
++            worker.start()
++        except BaseException:
++            with _LOCK:
++                _ACTIVE.discard(key)
++            raise
++        if not finished.wait(timeout):
++            return {"status": "unknown" if operation == "write" else "unavailable",
++                    "reason": "deadline_exceeded"}
++        return result[0]
++
++    def _invoke(self, operation, context, deadline, arguments):
++        from agent.secret_scope import (
++            build_profile_secret_scope, reset_multiplex_context, reset_secret_scope,
++            set_multiplex_context, set_secret_scope,
++        )
++        from hermes_cli.plugins_loader import _plugin_home_scope
++
++        with _plugin_home_scope(self.home):
++            config = _config(self.home)
++            if not _consented(config, self.plugin_id):
++                return {"status": "unavailable", "reason": "not_consented"}
++            name = _selection(config)
++            if not name:
++                return {"status": "unavailable", "reason": "no_external_provider"}
++            if context["scheduled"] and not _consented(config, self.plugin_id, SCHEDULED_CAPABILITY):
++                return {"status": "unavailable", "reason": "scheduled_records_disabled"}
++            multiplex = set_multiplex_context(True)
++            try:
++                secrets = set_secret_scope(build_profile_secret_scope(self.home), profile_home=str(self.home))
++                try:
++                    resolved = dict(context)
++                    if not resolved["cwd"]:
++                        resolved["cwd"] = str(config.get("terminal", {}).get("cwd") or "")
++                    return self._provider_call(name, operation, resolved, deadline, arguments)
++                finally:
++                    reset_secret_scope(secrets)
++            finally:
++                reset_multiplex_context(multiplex)
++
++    def _provider_call(self, name, operation, context, deadline, arguments):
++        from hermes_cli.profiles import get_active_profile_name
++        from plugins.memory import load_memory_provider
++
++        provider = load_memory_provider(name, register_skills=False)
++        if provider is None:
++            return {"status": "unavailable", "reason": "provider_unavailable"}
++        capabilities = _capabilities(provider)
++        if not capabilities["write"]:
++            return {"status": "unavailable", "reason": "capability_unavailable"}
++        if operation == "lookup" and not capabilities["lookup"]:
++            return {"status": "unknown", "reason": "lookup_unsupported"}
++        if not provider.is_available():
++            return {"status": "unavailable", "reason": "provider_unavailable"}
++        try:
++            provider.initialize(
++                context["session_id"], hermes_home=str(self.home), platform=context["platform"],
++                agent_context="cron" if context["scheduled"] else "workflow",
++                agent_identity=get_active_profile_name(), agent_workspace="hermes", cwd=context["cwd"],
++                user_id=context["user_id"], user_id_alt=context["user_id_alt"],
++                parent_session_id=context["parent_session_id"],
++            )
++            capabilities = _capabilities(provider)
++            if not capabilities["write"]:
++                return {"status": "unavailable", "reason": "capability_unavailable"}
++            token = provider.record_destination()
++            if not isinstance(token, str) or not re.fullmatch(r"[0-9a-f]{64}", token):
++                return {"status": "unavailable", "reason": "destination_unsupported"}
++            binding = hashlib.sha256(json.dumps(
++                [str(self.home), name, token, context], sort_keys=True
++            ).encode()).hexdigest()
++            destination = {"home": str(self.home), "provider": name, "binding": binding}
++            if operation == "describe":
++                return {"api_version": 1, "status": "ready", "destination": destination,
++                        "capabilities": capabilities, "context": context}
++            if arguments.get("expected_destination") != destination:
++                return {"status": "failed", "reason": "destination_changed"}
++            # Revalidate selection/consent before accepting a write, while the
++            # initialized provider instance keeps its own destination pinned.
++            current = _config(self.home)
++            if not _consented(current, self.plugin_id) or _selection(current) != name or (
++                context["scheduled"] and not _consented(current, self.plugin_id, SCHEDULED_CAPABILITY)
++            ):
++                return {"status": "failed", "reason": "selection_changed"}
++            remaining = deadline - time.monotonic()
++            if remaining <= 0:
++                return {"status": "failed", "reason": "deadline_before_acceptance"}
++            kwargs = {"effect_id": arguments["effect_id"], "expected_destination": token,
++                      "timeout": remaining}
++            if operation == "lookup":
++                return _receipt(provider.lookup_record(**kwargs))
++            from agent.memory_manager import _redact_for_provider
++
++            return _receipt(provider.write_record(_redact_for_provider(arguments["record"]), **kwargs))
++        finally:
++            provider.shutdown()
+diff --git a/hermes_cli/plugins.py b/hermes_cli/plugins.py
+index eda71a0ee4..43fd206491 100644
+--- a/hermes_cli/plugins.py
++++ b/hermes_cli/plugins.py
+@@ -58,6 +58,7 @@ from hermes_cli.plugins_dispatch import (
+     is_valid_system_prompt_section_id, resolve_plugin_command_result,
+ )
+ from hermes_cli.plugins_capability_ctx import PluginCapabilityCtxMixin
++from hermes_cli.plugins_memory_ctx import PluginMemoryCtxMixin
+ from hermes_cli.plugins_ledger import PluginLedgerMixin, PluginRegistration
+ from hermes_cli.plugins_registrars import _SCOPED_PROVIDER_REGISTRARS, make_scoped_provider_registrar
+ from hermes_cli.plugins_state import (
+@@ -227,7 +228,7 @@ class LoadedPlugin:
+     deferred: bool = False
+ 
+ 
+-class PluginContext(PluginCapabilityCtxMixin):
++class PluginContext(PluginCapabilityCtxMixin, PluginMemoryCtxMixin):
+     """Facade given to plugins so they can register tools and hooks."""
+ 
+     def __init__(self, manifest: PluginManifest, manager: PluginManager):
+@@ -722,17 +723,6 @@ class PluginContext(PluginCapabilityCtxMixin):
+             return
+         logger.info("Plugin '%s' registered context reference: @%s:", self.manifest.name, provider.prefix)
+ 
+-    def register_memory_provider(self, provider) -> None:
+-        """Record a memory provider (inert). Activation is owned by ``plugins/memory`` via
+-        ``memory.provider``; a provider reaching here was loaded by the general manager, and
+-        without this method its ``register()`` would fail on a missing attribute."""
+-        from agent.memory_provider import MemoryProvider
+-        if self._wrong_type(provider, MemoryProvider, "memory provider"):
+-            return
+-        self._memory_provider = provider
+-        logger.debug("Plugin '%s' registered memory provider: %s", self.manifest.name,
+-                     getattr(provider, "name", "?"))
+-
+     @_serialized_replacement
+     def register_dashboard_auth_provider(self, provider) -> Optional[PluginRegistration]:
+         """Register a :class:`hermes_cli.dashboard_auth.DashboardAuthProvider` for the dashboard
+diff --git a/hermes_cli/plugins_memory_ctx.py b/hermes_cli/plugins_memory_ctx.py
+new file mode 100644
+index 0000000000..4b62549de3
+--- /dev/null
++++ b/hermes_cli/plugins_memory_ctx.py
+@@ -0,0 +1,55 @@
++"""Additive JSON-only memory-record bridge for in-process and hosted plugins."""
++
++from __future__ import annotations
++
++import logging
++from typing import Any
++
++logger = logging.getLogger(__name__)
++
++
++class PluginMemoryCtxMixin:
++    def register_memory_provider(self, provider) -> None:
++        """Record an inert provider; activation is owned by memory.provider."""
++        from agent.memory_provider import MemoryProvider
++
++        if self._wrong_type(provider, MemoryProvider, "memory provider"):
++            return
++        self._memory_provider = provider
++        logger.debug("Plugin '%s' registered memory provider: %s", self.manifest.name,
++                     getattr(provider, "name", "?"))
++
++    def _memory_record_client(self):
++        from hermes_cli.plugin_memory_records import MemoryRecordClient
++
++        return MemoryRecordClient(self._manager.home_path, self.plugin_id)
++
++    def memory_record_status(self) -> dict[str, Any]:
++        """Configuration-only status. Does not initialize a memory provider."""
++        from hermes_cli.config_backend import ConfigBackendUnavailable
++
++        try:
++            return self._memory_record_client().status()
++        except (ConfigBackendUnavailable, Exception):  # health: allow BLE001 -- config boundary degrades without publishing config or credential text
++            return {"api_version": 1, "status": "unavailable", "reason": "config_unavailable"}
++
++    def describe_memory_writer(self, context: dict[str, Any], *, timeout: float = 5) -> dict[str, Any]:
++        """Bind a consented explicit writer; unsupported providers remain inert."""
++        return self._memory_record_client().describe(context, timeout=timeout)
++
++    def write_memory_record(self, record: dict[str, Any], *, context: dict[str, Any],
++                            effect_id: str, expected_destination: dict[str, Any],
++                            timeout: float = 5) -> dict[str, Any]:
++        """Write at the frozen destination, with bounded execution and an honest receipt."""
++        return self._memory_record_client().write(
++            record, context=context, effect_id=effect_id,
++            expected_destination=expected_destination, timeout=timeout,
++        )
++
++    def lookup_memory_record(self, *, context: dict[str, Any], effect_id: str,
++                             expected_destination: dict[str, Any], timeout: float = 5) -> dict[str, Any]:
++        """Reconcile a receipt read-only. This never repeats an ambiguous write."""
++        return self._memory_record_client().lookup(
++            context=context, effect_id=effect_id,
++            expected_destination=expected_destination, timeout=timeout,
++        )
+diff --git a/tests/agent/test_memory_provider_caller_profile.py b/tests/agent/test_memory_provider_caller_profile.py
+index 019f3d01e0..25bad2723a 100644
+--- a/tests/agent/test_memory_provider_caller_profile.py
++++ b/tests/agent/test_memory_provider_caller_profile.py
+@@ -150,7 +150,7 @@ def _assert_generic_refusal(result, caplog, *homes):
+     assert _REFUSAL_CODE not in error and not any(str(home) in error for home in homes), result
+     logged = "\n".join(r.getMessage() for r in caplog.records if r.name == "agent.memory_caller_scope")
+     assert _REFUSAL_CODE in logged, logged
+-    assert all(str(home) in logged for home in homes), logged
++    assert all(repr(str(home))[1:-1] in logged for home in homes), logged
+ 
+ 
+ @pytest.fixture
+@@ -327,7 +327,7 @@ def test_lifecycle_hooks_from_another_profiles_scope_are_refused(homes, caplog):
+             hook(alpha)
+     assert _InstanceScopedProvider.events == []
+     assert _refused_hooks(caplog) == set(_HOOKS)
+-    assert all(str(beta_home) in r.getMessage() for r in caplog.records if r.name == "agent.memory_caller_scope")
++    assert all(repr(str(beta_home))[1:-1] in r.getMessage() for r in caplog.records if r.name == "agent.memory_caller_scope")
+ 
+ 
+ def test_multiplexed_lifecycle_hooks_without_a_caller_scope_are_refused(homes, multiplexed, monkeypatch, caplog):
+@@ -442,7 +442,7 @@ def test_one_provider_instance_is_never_served_to_a_second_profile(homes, multip
+         assert json.loads(alpha.handle_tool_call(_HOOK_TOOL, {})) == {"ok": True}
+     assert [e[1] for e in _InstanceScopedProvider.events] == [str(alpha_home)]
+     logged = "\n".join(r.getMessage() for r in caplog.records if r.name == "agent.memory_caller_scope")
+-    assert "memory_provider_instance_shared" in logged and str(beta_home) in logged, logged
++    assert "memory_provider_instance_shared" in logged and repr(str(beta_home))[1:-1] in logged, logged
+ 
+ 
+ def test_agent_whose_provider_instance_is_refused_is_told_and_runs_without_it(homes, multiplexed, monkeypatch, caplog):
+diff --git a/tests/hermes_cli/test_memory_records.py b/tests/hermes_cli/test_memory_records.py
+new file mode 100644
+index 0000000000..e181e45bd5
+--- /dev/null
++++ b/tests/hermes_cli/test_memory_records.py
+@@ -0,0 +1,253 @@
++"""Explicit memory-record consent, destination fencing and hosted compatibility."""
++
++import hashlib
++import json
++import threading
++from concurrent.futures import ThreadPoolExecutor
++from pathlib import Path
++
++import hermes_yaml as yaml
++import pytest
++
++from agent.memory_provider import MemoryProvider
++from hermes_cli.plugin_memory_records import MemoryRecordClient
++
++
++PROVIDER = '''
++import hashlib, json
++from pathlib import Path
++from agent.memory_provider import MemoryProvider
++from agent.secret_scope import get_secret
++from hermes_constants import get_hermes_home
++
++class Ledger(MemoryProvider):
++    name = 'recordtest'
++    def is_available(self): return True
++    def get_tool_schemas(self): return []
++    def initialize(self, session_id, **kw):
++        self.home = Path(kw['hermes_home'])
++        assert self.home == get_hermes_home()
++        self.bank = (self.home / 'bank.txt').read_text()
++        self.key = get_secret('TEST_RECORD_KEY')
++    def record_capabilities(self):
++        return {'write': True, 'lookup': True, 'idempotency': True}
++    def record_destination(self):
++        return hashlib.sha256((str(self.home) + self.bank).encode()).hexdigest()
++    def write_record(self, record, *, effect_id, expected_destination, timeout):
++        assert expected_destination == self.record_destination()
++        path = self.home / 'ledger.jsonl'
++        prior = path.read_text() if path.exists() else ''
++        if not any(json.loads(line)['id'] == effect_id for line in prior.splitlines()):
++            with path.open('a') as stream:
++                stream.write(json.dumps({'id': effect_id, 'bank': self.bank, 'key': self.key, 'record': record}) + '\\n')
++        return {'status': 'acknowledged', 'receipt_id': effect_id}
++    def lookup_record(self, *, effect_id, expected_destination, timeout):
++        assert expected_destination == self.record_destination()
++        path = self.home / 'ledger.jsonl'
++        if path.exists() and any(json.loads(line)['id'] == effect_id for line in path.read_text().splitlines()):
++            return {'status': 'acknowledged', 'receipt_id': effect_id}
++        return {'status': 'unknown'}
++def register(ctx): ctx.register_memory_provider(Ledger())
++'''
++
++CONSUMER = '''
++import json
++def register(ctx):
++    def call(args, **kw):
++        operation = args.pop('operation')
++        return json.dumps(getattr(ctx, operation)(**args))
++    ctx.register_tool(name='record_consumer', toolset='record_consumer',
++        schema={'name': 'record_consumer', 'description': 'Test writer',
++                'parameters': {'type': 'object', 'properties': {}}}, handler=call)
++'''
++
++
++def home_with_provider(tmp_path, monkeypatch, *, consent=True, isolation="in_process"):
++    home = tmp_path / "owner"
++    home.mkdir()
++    monkeypatch.setenv("HERMES_HOME", str(home))
++    monkeypatch.setenv("HOME", str(tmp_path / "os-home"))
++    monkeypatch.setattr(Path, "home", lambda: tmp_path / "os-home")
++    config = {
++        "memory": {"provider": "recordtest"},
++        "plugins": {"enabled": ["record-consumer"], "isolation": isolation,
++                    "entries": {"record-consumer": {
++                        "granted_capabilities": ["memory.write_records"] if consent else []}}},
++    }
++    (home / "config.yaml").write_text(yaml.safe_dump(config))
++    (home / ".env").write_text("TEST_RECORD_KEY=owner-secret\n")
++    (home / "bank.txt").write_text("bank-a")
++    for name, body in (("recordtest", PROVIDER), ("record-consumer", CONSUMER)):
++        directory = home / "plugins" / name
++        directory.mkdir(parents=True)
++        (directory / "__init__.py").write_text(body)
++        (directory / "plugin.yaml").write_text(yaml.safe_dump({
++            "name": name, "version": "1.0", "capabilities": ["memory.write_records"],
++        }))
++    return home, config
++
++
++def test_status_and_unconsented_calls_never_activate_a_provider(tmp_path, monkeypatch):
++    home, _ = home_with_provider(tmp_path, monkeypatch, consent=False)
++    import plugins.memory
++    monkeypatch.setattr(plugins.memory, "load_memory_provider", lambda *a, **kw: pytest.fail("provider loaded"))
++    client = MemoryRecordClient(home, "record-consumer")
++    assert client.status() == {"api_version": 1, "provider": "recordtest", "consented": False, "provider_support": "unprobed"}
++    assert client.describe({"session_id": "run"})["reason"] == "not_consented"
++    assert not (home / "ledger.jsonl").exists()
++
++
++@pytest.mark.parametrize("isolation", ["in_process", "host"])
++@pytest.mark.platforms("any")
++def test_real_provider_and_consumer_discovery_use_scoped_public_record_calls(tmp_path, monkeypatch, isolation):
++    from hermes_cli import plugins as plugins_mod
++    from hermes_cli.plugins import PluginManager
++    from tools.registry import registry
++
++    home, _ = home_with_provider(tmp_path, monkeypatch, isolation=isolation)
++    empty = tmp_path / "bundled"
++    empty.mkdir()
++    monkeypatch.setattr(plugins_mod, "get_bundled_plugins_dir", lambda: empty)
++    manager = PluginManager()
++    manager.discover_and_load()
++    context = {"session_id": "workflow-run"}
++    def call(operation, **arguments):
++        return json.loads(registry.dispatch("record_consumer", {"operation": operation, **arguments}, scope=manager.scope_key))
++    try:
++        description = call("describe_memory_writer", context=context, timeout=15)
++        assert description["status"] == "ready", description
++        destination = description["destination"]
++        assert destination["home"] == str(home.resolve())
++        assert call("write_memory_record", context=context, effect_id="effect-1", expected_destination=destination,
++                    record={"body": "password=synthetic-secret"}, timeout=15)["status"] == "acknowledged"
++        assert call("lookup_memory_record", context=context, effect_id="effect-1", expected_destination=destination,
++                    timeout=15)["status"] == "acknowledged"
++        ledger = [json.loads(line) for line in (home / "ledger.jsonl").read_text().splitlines()]
++        assert len(ledger) == 1
++        record = ledger[0].pop("record")
++        assert "synthetic-secret" not in json.dumps(record)
++        assert record["body"].startswith("password=")
++        assert ledger == [{"id": "effect-1", "bank": "bank-a", "key": "owner-secret"}]
++        (home / "bank.txt").write_text("bank-b")
++        assert call("write_memory_record", context=context, effect_id="effect-2", expected_destination=destination,
++                    record={"body": "new bank must be refused"}, timeout=15)["reason"] == "destination_changed"
++        assert len((home / "ledger.jsonl").read_text().splitlines()) == 1
++    finally:
++        manager.unload()
++        host = getattr(manager, "_plugin_host_instance", None)
++        if host is not None:
++            host.shutdown()
++
++
++def test_old_provider_is_unsupported_without_initialization_or_native_write(tmp_path, monkeypatch):
++    home, _ = home_with_provider(tmp_path, monkeypatch)
++    class OldProvider(MemoryProvider):
++        name = "old"
++        def is_available(self): pytest.fail("availability should not run")
++        def get_tool_schemas(self): return []
++        def initialize(self, *args, **kwargs): pytest.fail("initialization should not run")
++        def on_memory_write(self, *args, **kwargs): pytest.fail("native mirror should not run")
++    import plugins.memory
++    monkeypatch.setattr(plugins.memory, "load_memory_provider", lambda *a, **kw: OldProvider())
++    assert MemoryRecordClient(home, "record-consumer").describe({"session_id": "run"})["reason"] == "capability_unavailable"
++
++
++def test_scheduled_records_require_separate_policy_even_after_consent(tmp_path, monkeypatch):
++    home, config = home_with_provider(tmp_path, monkeypatch)
++    client = MemoryRecordClient(home, "record-consumer")
++    context = {"session_id": "cron-run", "scheduled": True}
++    assert client.describe(context)["reason"] == "scheduled_records_disabled"
++    config["plugins"]["entries"]["record-consumer"]["granted_capabilities"].append("memory.write_scheduled_records")
++    (home / "config.yaml").write_text(yaml.safe_dump(config))
++    assert client.describe(context)["status"] == "ready"
++
++
++def test_initialized_provider_policy_can_withhold_record_writes(tmp_path, monkeypatch):
++    home, _ = home_with_provider(tmp_path, monkeypatch)
++    closed = []
++    class ContextOnly:
++        initialized = False
++        def record_capabilities(self): return {"write": not self.initialized}
++        def is_available(self): return True
++        def initialize(self, *args, **kw): self.initialized = True
++        def record_destination(self): pytest.fail("context-only policy must stop binding")
++        def shutdown(self): closed.append(True)
++    import plugins.memory
++    monkeypatch.setattr(plugins.memory, "load_memory_provider", lambda *a, **kw: ContextOnly())
++    assert MemoryRecordClient(home, "record-consumer").describe({"session_id": "run"})["reason"] == "capability_unavailable"
++    assert closed == [True]
++
++
++def test_omitted_cwd_resolves_from_the_owner_profile_and_can_be_frozen(tmp_path, monkeypatch):
++    home, config = home_with_provider(tmp_path, monkeypatch)
++    config["terminal"] = {"cwd": str(tmp_path / "owner-project")}
++    (home / "config.yaml").write_text(yaml.safe_dump(config))
++    client = MemoryRecordClient(home, "record-consumer")
++    description = client.describe({"session_id": "run"})
++    assert description["status"] == "ready", description
++    assert description["context"]["cwd"] == str(tmp_path / "owner-project")
++    config["terminal"]["cwd"] = str(tmp_path / "new-project")
++    (home / "config.yaml").write_text(yaml.safe_dump(config))
++    frozen = client.describe(description["context"])
++    assert frozen["destination"] == description["destination"]
++
++
++def test_interleaved_owner_profiles_keep_secrets_and_destinations_separate(tmp_path, monkeypatch):
++    owners = []
++    for label in ("alpha", "beta"):
++        directory = tmp_path / label
++        directory.mkdir()
++        home, _ = home_with_provider(directory, monkeypatch)
++        (home / ".env").write_text(f"TEST_RECORD_KEY={label}-secret\n")
++        (home / "bank.txt").write_text(label)
++        owners.append((label, home, MemoryRecordClient(home, "record-consumer")))
++    def exercise(owner):
++        label, home, client = owner
++        context = {"session_id": f"run-{label}"}
++        description = client.describe(context)
++        assert description["status"] == "ready", description
++        result = client.write({"kind": "summary"}, context=context, effect_id=f"effect-{label}",
++                              expected_destination=description["destination"])
++        assert result["status"] == "acknowledged", result
++        entry = json.loads((home / "ledger.jsonl").read_text())
++        assert entry["key"] == f"{label}-secret"
++        assert entry["bank"] == label
++        return description["destination"]
++    with ThreadPoolExecutor(max_workers=2) as executor:
++        destinations = list(executor.map(exercise, owners))
++    assert destinations[0] != destinations[1]
++    _, home, client = owners[1]
++    assert client.write({"kind": "must-not-cross"}, context={"session_id": "run-alpha"},
++                        effect_id="cross-profile", expected_destination=destinations[0])["reason"] == "destination_changed"
++    assert len((home / "ledger.jsonl").read_text().splitlines()) == 1
++
++
++def test_timed_out_initialization_cannot_start_a_late_write_or_spawn_more_writers(tmp_path, monkeypatch):
++    home, _ = home_with_provider(tmp_path, monkeypatch)
++    entered, release, closed = threading.Event(), threading.Event(), threading.Event()
++    writes = []
++    class SlowProvider:
++        def record_capabilities(self): return {"write": True}
++        def is_available(self): return True
++        def initialize(self, *args, **kw):
++            entered.set()
++            assert release.wait(10)
++        def record_destination(self): return "a" * 64
++        def write_record(self, *args, **kw): writes.append(True)
++        def shutdown(self): closed.set()
++    import plugins.memory
++    monkeypatch.setattr(plugins.memory, "load_memory_provider", lambda *a, **kw: SlowProvider())
++    context = {"session_id": "run", "cwd": "", "platform": "workflow", "scheduled": False,
++               "user_id": "", "user_id_alt": "", "parent_session_id": ""}
++    binding = hashlib.sha256(json.dumps([str(home.resolve()), "recordtest", "a" * 64, context], sort_keys=True).encode()).hexdigest()
++    client = MemoryRecordClient(home, "record-consumer")
++    try:
++        result = client.write({"body": "test"}, context=context, effect_id="effect-1", timeout=2,
++                              expected_destination={"home": str(home.resolve()), "provider": "recordtest", "binding": binding})
++        assert entered.is_set()
++        assert result == {"status": "unknown", "reason": "deadline_exceeded"}
++        assert client.describe(context)["reason"] == "writer_busy"
++    finally:
++        release.set()
++        assert closed.wait(5)
++    assert writes == []
+diff --git a/tests/hermes_cli/test_plugin_capabilities.py b/tests/hermes_cli/test_plugin_capabilities.py
+index cfee0a0dda..6b02c7124d 100644
+--- a/tests/hermes_cli/test_plugin_capabilities.py
++++ b/tests/hermes_cli/test_plugin_capabilities.py
+@@ -42,11 +42,13 @@ def _read_cfg(home):
+ 
+ 
+ class TestRegistry:
+-    def test_every_capability_has_legacy_gate(self):
+-        # llm.side_question postdates the consent flow: declare + consent is its only gate.
++    def test_new_capabilities_require_explicit_consent_without_legacy_gates(self):
+         for spec in CAPABILITY_REGISTRY.values():
+-            assert bool(spec.legacy_path) is (spec.id != "llm.side_question"), spec.id
+             assert spec.description
++            if not spec.legacy_path:
++                assert not plugin_capability_granted("probe", spec.id, config={})
++                granted = {"plugins": {"entries": {"probe": {"granted_capabilities": [spec.id]}}}}
++                assert plugin_capability_granted("probe", spec.id, config=granted)
+ 
+ 
+ 
+diff --git a/website/docs/developer-guide/memory-provider-plugin.md b/website/docs/developer-guide/memory-provider-plugin.md
+index 9ea6b0bd88..7d97374f5f 100644
+--- a/website/docs/developer-guide/memory-provider-plugin.md
++++ b/website/docs/developer-guide/memory-provider-plugin.md
+@@ -8,6 +8,81 @@ description: "How to build a memory provider plugin for Hermes Agent"
+ 
+ Memory provider plugins give Hermes Agent persistent, cross-session knowledge beyond the built-in MEMORY.md and USER.md. This guide covers how to build one.
+ 
++## Explicit records from orchestration plugins
++
++Conversation capture and built-in memory mirroring do not constitute an arbitrary
++record-writing API. Providers can separately opt in to explicit records using
++these additive `MemoryProvider` methods (older providers keep inert defaults):
++
++* `record_capabilities()` returns boolean `write`, `lookup`, and `idempotency`
++  flags. Keep this description free of network calls and secret reads.
++* `record_destination()` returns a non-secret SHA-256 binding of the initialized
++  writer's actual endpoint/tenant/write-bank set and identity-sensitive policy.
++  Pin that destination to the instance. Reconfiguration must change the binding.
++* `write_record(record, *, effect_id, expected_destination, timeout)` atomically
++  checks the expected binding before acceptance and returns a JSON-compatible
++  receipt. Enforce the timeout. Return `queued`, `acknowledged` (durably stored),
++  `failed`, or `unknown`, with an optional `receipt_id`. Queuing is not durable
++  storage or recall visibility. Do not claim idempotency unless client effect IDs
++  are durably deduplicated by the backend.
++* `lookup_record(*, effect_id, expected_destination, timeout)` is read-only.
++  A lookup must never retry a write or redirect to a newly selected destination.
++
++Consumers declare the `memory.write_records` capability in their manifest and
++obtain user consent through the existing plugin capability flow. They also need
++their own explicit feature enablement; selecting `memory.provider` alone never
++authorizes additional records. Scheduled records additionally require the
++separate `memory.write_scheduled_records` capability grant in the owning profile.
++These controls do not change the provider's automatic conversation policy.
++
++The JSON-only `PluginContext` surface works in process and across the plugin host:
++
++```python
++status = ctx.memory_record_status()  # Config-only; provider support remains unprobed.
++context = {"session_id": run_id, "cwd": project_path, "scheduled": False}
++description = ctx.describe_memory_writer(context, timeout=5)
++if description.get("status") == "ready":
++    destination = description["destination"]  # Persist with the durable intent.
++    context = description["context"]  # Persist the host-resolved context too.
++    receipt = ctx.write_memory_record(
++        minimized_record, context=context, effect_id=effect_id,
++        expected_destination=destination, timeout=5,
++    )
++```
++
++If `cwd` is empty, the host resolves it from the owning profile's `terminal.cwd`.
++The ready description returns this resolved context; freeze it rather than
++resolving the current workspace again on every delivery attempt.
++Persist the context and destination with the intent. `lookup_memory_record` takes
++the same context, effect ID, expected destination and timeout; use it only for
++explicit reconciliation. Headless consumers use the public companion
++`hermes_cli.plugin_memory_records.MemoryRecordClient(home, plugin_id)` with
++`status`, `describe`, `write`, and `lookup`, under the same consent and scope rules.
++The plugin context fixes the owner home and plugin ID; these cannot be supplied
++by a hosted caller.
++
++The host owns fresh provider initialization, secret scope and cleanup, without
++constructing an agent or calling conversation/native-memory hooks. It supplies
++`agent_context="workflow"` for manual records and `"cron"` for scheduled records.
++Profile identity comes from the owning Hermes scope and the normal workspace
++namespace stays `hermes`; neither can be overridden by a plugin. The context can
++also freeze the verified origin's `platform`, `user_id`, `user_id_alt`, and
++`parent_session_id`. Omitted origin values are empty, and platform defaults to
++`workflow`. Providers apply their existing bank-routing policy to this explicit
++run context. Persist these values with the destination; changing them changes
++the binding and cannot redirect an existing intent.
++Redaction runs before provider dispatch, in addition to consumer-side data
++minimization. An unimplemented provider reports `capability_unavailable`; it
++never falls back to another provider or to MEMORY.md/USER.md.
++
++Calls have a maximum 30-second deadline. A timed-out writer remains quarantined
++in its owner-profile/plugin slot until cleanup ends, so callers cannot multiply
++stalled writes. A deadline never proves a write was absent: persist `unknown`
++and reconcile where supported instead of resending. The host checks expiry
++before acceptance, so late initialization cannot start an overdue write. Provider
++cleanup and any backend processing can outlive the caller's deadline. This API
++does not claim exactly-once delivery or search visibility.
++
+ :::tip
+ Memory providers are one of two **provider plugin** types. The other is [Context Engine Plugins](./context-engine-plugin.md), which replace the built-in context compressor. Both follow the same pattern: single-select, config-driven, managed via `hermes plugins`.
+ :::

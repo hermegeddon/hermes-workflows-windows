@@ -203,7 +203,8 @@ def build_guide(workflow, placeholders, items, version, hints):
              f"**Version:** `{version['human_version']}`", "",
              "## Prerequisites", "",
              f"- **REQUIRED:** Hermes Workflows Python v1.0.2 or later, template format 1. {WORKFLOWS_DOC}",
-             f"- **RECOMMENDED:** OpenSecondBrain (o2b) for workflows that use its memory tools. {MEMORY_DOC}",
+             "- **RECOMMENDED:** For native workflow records, configure the existing Hermes memory provider and explicitly enable workflow memory on the target host. Provider support and permission are required; memory is optional.",
+             f"- OpenSecondBrain (o2b) is needed only for workflows that explicitly use its tools. {MEMORY_DOC}",
              "- Install the skills listed below and configure the required profiles/models on the target host.",
              "", "## How to instantiate", "",
              "1. Copy the `.template.yaml` file to a new workflow file. It uses JSON, a YAML subset, so no YAML dependency is required.",
@@ -212,6 +213,9 @@ def build_guide(workflow, placeholders, items, version, hints):
              "4. Import with `hermes-workflows import <file>` and validate before running. For dashboard JSON import, wrap the adapted spec as `{\"workflow\": {...}}` in a `.workflow.json` file.", ""]
     if hints.get("overview"):
         lines += [hints["overview"], ""]
+    if "workflow_memory" in workflow.get("defaults", {}):
+        lines += ["## Native workflow memory", "",
+                  "`defaults.workflow_memory` is preserved as a Python backend extension. Review its explicit opt-in before import. The upstream TypeScript backend does not implement this extension; its separate `defaults.memory` policy keeps its original meaning.", ""]
     if workflow.get("params"):
         lines += ["## Parameters", "", "Typed parameters are preserved. Review their defaults and enum options for the target installation.", ""]
         for param in workflow["params"]:

@@ -41,6 +41,57 @@ function stubClient(overrides: Partial<WorkflowsApi> = {}): WorkflowsApi {
 afterEach(() => vi.restoreAllMocks());
 
 describe("SettingsPage", () => {
+  const memoryResponse: SettingsResponse = {
+    ...response,
+    memory: {
+      default_enabled: true, route: "hermes",
+      host: { available: true, provider: "hindsight", consented: true, provider_support: "unprobed" },
+      last_verified_capabilities: { write: true, lookup: false, idempotency: false },
+      counts: { queued: 4 }, last_delivery: { run_id: "run-1", status: "queued" },
+    },
+  };
+
+  it("shows the configured provider and queued receipt without claiming search visibility", async () => {
+    render(<SettingsPage client={stubClient({ getSettings: vi.fn(async () => memoryResponse) })} />);
+    expect(await screen.findByText(/Configured Hermes provider: hindsight/)).toBeInTheDocument();
+    expect(screen.getByText(/Queued records await provider processing/)).toBeInTheDocument();
+    expect(screen.getByText(/receipt lookup unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText(/connected|searchable|stored successfully/i)).not.toBeInTheDocument();
+  });
+
+  it("clearly degrades when the host has no memory writer", async () => {
+    const older: SettingsResponse = { ...memoryResponse, memory: { ...memoryResponse.memory!,
+      host: { available: false, provider: "hindsight", reason: "capability_unavailable" },
+    } };
+    render(<SettingsPage client={stubClient({ getSettings: vi.fn(async () => older) })} />);
+    expect(await screen.findByText(/unavailable on this Hermes version/i)).toBeInTheDocument();
+  });
+
+  it("refreshes memory status without overwriting unsaved settings", async () => {
+    const updated: SettingsResponse = { ...memoryResponse, memory: { ...memoryResponse.memory!,
+      last_delivery: { run_id: "run-1", status: "acknowledged" },
+    } };
+    const getSettings = vi.fn().mockResolvedValueOnce(memoryResponse).mockResolvedValueOnce(updated);
+    render(<SettingsPage client={stubClient({ getSettings })} />);
+    const board = await screen.findByLabelText(/internal board/i);
+    await userEvent.clear(board);
+    await userEvent.type(board, "unsaved-edit");
+    await userEvent.click(screen.getByRole("button", { name: /refresh memory status/i }));
+    expect(await screen.findByText("acknowledged")).toBeInTheDocument();
+    expect(board).toHaveValue("unsaved-edit");
+  });
+
+  it("uses descriptive native memory field labels when supplied by the backend", async () => {
+    const native: SettingsResponse = { ...response, schema: { ...response.schema, groups: [{
+      key: "memory", label: "Workflow memory", fields: [{
+        key: "workflow_memory_enabled", label: "Store workflow memory by default",
+        type: "bool", enforced: true, default: false,
+      }],
+    }] } };
+    render(<SettingsPage client={stubClient({ getSettings: vi.fn(async () => native) })} />);
+    expect(await screen.findByRole("switch", { name: "Store workflow memory by default" })).toBeInTheDocument();
+  });
+
   it("renders every group and field from the schema", async () => {
     render(<SettingsPage client={stubClient()} />);
     expect(await screen.findByText("Execution")).toBeInTheDocument();

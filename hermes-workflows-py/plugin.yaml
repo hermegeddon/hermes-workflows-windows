@@ -3,6 +3,9 @@ version: "1.0.2"
 description: "Windows-native Python DAG workflows for Hermes Agent."
 author: "Hermes Workflows Python contributors"
 kind: standalone
+capabilities:
+  - memory.write_records
+  - memory.write_scheduled_records
 provides_hooks:
   - pre_gateway_dispatch
   - post_api_request

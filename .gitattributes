@@ -1,5 +1,9 @@
 * text=auto eol=lf
 
+# Unified patches require a space marker even on empty context lines.
+# Check the patched source for trailing whitespace, not these context markers.
+docs/provider-patches/*.patch whitespace=-blank-at-eol
+
 # Keep integrity-checked assets byte-for-byte identical across Windows clones.
 hermes-workflows-py/dashboard/dist/** -text whitespace=cr-at-eol
 hermes-workflows-py/dashboard/compat/** -text whitespace=cr-at-eol

@@ -42,6 +42,18 @@ describe("workflowJsonFile", () => {
 });
 
 describe("parseWorkflowJsonFile", () => {
+  it("preserves native memory policy independently of the upstream provider enum", () => {
+    const nativeWorkflow = {
+      ...workflow,
+      defaults: {
+        memory: { provider: "none" as const },
+        workflow_memory: { enabled: true, provider: "hermes", allow_scheduled: false },
+      },
+    };
+    const body = parseWorkflowJsonFile(workflowJsonFile({ ...detail, workflow: nativeWorkflow }).content);
+    expect(body.workflow).toEqual(nativeWorkflow);
+  });
+
   it("round-trips an exported file back to the create body", () => {
     expect(parseWorkflowJsonFile(workflowJsonFile(detail).content)).toEqual({ workflow, ui });
   });

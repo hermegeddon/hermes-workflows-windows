@@ -214,6 +214,7 @@ export type WorkflowSettings = Record<string, SettingsValue>;
  *  persisted/displayed but not yet honoured by the engine. */
 export interface SettingsField {
   key: string;
+  label?: string;
   type: "string" | "int" | "bool" | "enum";
   enforced: boolean;
   default: SettingsValue;
@@ -235,4 +236,14 @@ export interface SettingsSchema {
 export interface SettingsResponse {
   values: WorkflowSettings;
   schema: SettingsSchema;
+  memory?: WorkflowMemoryStatus;
+}
+
+export interface WorkflowMemoryStatus {
+  default_enabled: boolean;
+  route: string;
+  host: { available: boolean; provider: string | null; consented?: boolean; provider_support?: string; reason?: string };
+  last_verified_capabilities: { write?: boolean; lookup?: boolean; idempotency?: boolean } | null;
+  counts: Record<string, number>;
+  last_delivery: { run_id: string; status: string; provider?: string; reason?: string; updated_at?: number } | null;
 }

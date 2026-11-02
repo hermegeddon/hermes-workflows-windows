@@ -49,10 +49,16 @@ def selected_edges(workflow: dict, run: dict, source: str) -> list[dict]:
 
 
 class Engine:
-    def __init__(self, db: Database, executor: Executor | None = None):
+    def __init__(self, db: Database, executor: Executor | None = None, *, memory_policy=None):
         self.db = db
         self.executor = executor or Executor()
         self.kanban = None
+        # New installs remain dormant; the run-owner policy must explicitly opt in.
+        if memory_policy is None:
+            from .memory_service import MemoryService
+
+            memory_policy = MemoryService(db)
+        self.memory_policy = memory_policy
 
     def board_executor(self):
         if self.kanban is None:
@@ -79,9 +85,12 @@ class Engine:
         run_id: str | None = None,
         origin: str | None = None,
         origin_metadata: dict | None = None,
+        scheduled: bool = False,
         _schedule_guard=None,
     ) -> dict:
         require_valid(workflow)
+        if type(scheduled) is not bool:
+            raise ValueError("scheduled must be boolean")
         if not workflow.get("enabled", True):
             raise ConflictError("workflow is disabled")
         config = settings_module.values(self.db)
@@ -114,6 +123,8 @@ class Engine:
         }
         if origin:
             state["origin"] = origin
+        if scheduled:
+            state["trigger_context"] = {"scheduled": True}
         if workflow_path:
             state["workflow_path"] = workflow_path
         if project_id or board:
@@ -123,6 +134,12 @@ class Engine:
             state["board"] = board
         if input and input.strip():
             state["input"] = input.strip()
+        if self.memory_policy is not None:
+            context = self.memory_policy.snapshot(
+                self.db.path.parent.parent, run=copy.deepcopy(state), workflow=workflow, settings=config
+            )
+            if context is not None:
+                state["memory_export"] = context
         return self.db.create_run(
             state, workflow, config["max_parallel_runs"], guard=_schedule_guard
         )

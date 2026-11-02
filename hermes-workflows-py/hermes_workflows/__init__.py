@@ -198,6 +198,7 @@ def register(ctx):
         "HERMES_KANBAN_TASK"
     ):
         runtime = get_runtime(home)
+        runtime.memory.context = ctx
         register_hook = getattr(ctx, "register_hook", None)
         if callable(register_hook):
             register_hook("pre_gateway_dispatch", runtime.pre_dispatch)

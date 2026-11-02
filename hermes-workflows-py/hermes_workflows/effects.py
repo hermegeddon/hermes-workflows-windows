@@ -130,13 +130,14 @@ class EffectStore:
             self.db._owned_row(con, run_id, owner, revision)
             con.execute(
                 "UPDATE py_effects SET status='unknown',updated_at=? WHERE run_id=? "
-                "AND status='in_flight' AND driver_owner!=?",
+                "AND status='in_flight' AND driver_owner!=? AND kind!='workflow_memory'",
                 (time.time(), run_id, owner),
             )
             return [
                 self._decode(row)
                 for row in con.execute(
-                    "SELECT * FROM py_effects WHERE run_id=? AND status='unknown'", (run_id,)
+                    "SELECT * FROM py_effects WHERE run_id=? AND status='unknown' "
+                    "AND kind!='workflow_memory'", (run_id,)
                 )
             ]
 

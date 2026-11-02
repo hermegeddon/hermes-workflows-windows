@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import time
@@ -112,6 +113,7 @@ class Database:
                 ) from exc
             self._event(con, state["run_id"], {"type": "run_created", "status": state["status"]})
             self._trace(con, None, state)
+            self._memory(con, None, state)
         return state
 
     @staticmethod
@@ -134,6 +136,23 @@ class Database:
             con.execute("ROLLBACK TO optional_trace")
         finally:
             con.execute("RELEASE optional_trace")
+
+    @staticmethod
+    def _memory(con, before, state):
+        if not state.get("memory_export", {}).get("enabled"):
+            return
+        con.execute("SAVEPOINT optional_memory")
+        try:
+            from .workflow_memory import capture
+
+            capture(con, before, state)
+        except Exception as exc:
+            con.execute("ROLLBACK TO optional_memory")
+            logging.getLogger(__name__).warning(
+                "Workflow memory intent capture failed (%s)", type(exc).__name__
+            )
+        finally:
+            con.execute("RELEASE optional_memory")
 
     def get_run(self, run_id: str) -> dict:
         with self.connect() as con:
@@ -191,6 +210,8 @@ class Database:
             if guard is not None:
                 guard(con, state)
             change(state)
+            if state.get("memory_export") != json.loads(before).get("memory_export"):
+                raise ConflictError("a run's memory destination and policy cannot be rebound")
             self._redact_capture(state)
             changed = json.dumps(state) != before or spec is not None
             revoked = invalidate and changed
@@ -220,6 +241,7 @@ class Database:
                     con, run_id, event or {"type": "state_changed", "status": state["status"]}
                 )
                 self._trace(con, json.loads(before), state, event)
+                self._memory(con, json.loads(before), state)
         return state
 
     def _sync_attempts(self, con, before, run, revision, restarts):

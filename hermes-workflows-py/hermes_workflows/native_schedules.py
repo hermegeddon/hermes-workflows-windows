@@ -335,7 +335,7 @@ class Schedules:
                 self.store(con, live)
 
             started = self.runtime.engine.start(
-                detail["workflow"], workflow_path=detail["path"], _schedule_guard=guard
+                detail["workflow"], workflow_path=detail["path"], _schedule_guard=guard, scheduled=True
             )
             self.runtime.start()
             return {"ok": True, "run_id": started["run_id"]}
@@ -405,7 +405,8 @@ def fire(path, workflow_id, *, hermes_source=None):
         raise ConflictError("workflow trigger changed before schedule reconciliation")
     try:
         state = engine.start(
-            detail["workflow"], workflow_path=detail["path"], run_id=run_id, _schedule_guard=guard
+            detail["workflow"], workflow_path=detail["path"], run_id=run_id, _schedule_guard=guard,
+            scheduled=True,
         )
         print(json.dumps({"run_id": state["run_id"]}))
     except ConflictError:

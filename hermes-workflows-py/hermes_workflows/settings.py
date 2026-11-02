@@ -65,6 +65,55 @@ SCHEMA = {
 SCHEMA["groups"].extend(
     [
         {
+            "key": "memory",
+            "label": "Workflow memory",
+            "fields": [
+                {
+                    "key": "workflow_memory_enabled",
+                    "label": "Store workflow memory by default",
+                    "type": "bool",
+                    "default": False,
+                    "enforced": True,
+                },
+                {
+                    "key": "workflow_memory_provider",
+                    "label": "Workflow memory route",
+                    "type": "enum",
+                    "options": ["hermes", "none"],
+                    "default": "hermes",
+                    "enforced": True,
+                },
+                {
+                    "key": "workflow_memory_allow_scheduled",
+                    "label": "Allow scheduled workflow records by default",
+                    "type": "bool",
+                    "default": False,
+                    "enforced": True,
+                },
+                *[
+                    {
+                        "key": "workflow_memory_" + key,
+                        "label": label,
+                        "type": "bool",
+                        "default": default,
+                        "enforced": True,
+                    }
+                    for key, label, default in (
+                        ("write_run_summaries", "Write run summaries", True),
+                        ("write_node_failures", "Write node failures", True),
+                        ("write_node_events", "Write node events", False),
+                    )
+                ],
+                {
+                    "key": "workflow_memory_timeout_seconds",
+                    "label": "Memory call deadline (seconds)",
+                    "type": "int",
+                    "default": 5,
+                    "enforced": True,
+                },
+            ],
+        },
+        {
             "key": "storage",
             "label": "Storage",
             "fields": [
@@ -127,7 +176,7 @@ SCHEMA["groups"].extend(
         },
         {
             "key": "open_second_brain",
-            "label": "OpenSecondBrain",
+            "label": "OpenSecondBrain (legacy compatibility)",
             "fields": [
                 {
                     "key": "mode",
@@ -221,6 +270,8 @@ def validate(patch: dict) -> dict:
             and value > 128
             or key == "dashboard_api_port"
             and value > 65535
+            or key == "workflow_memory_timeout_seconds"
+            and value > 30
         ):
             raise ValueError(f"{key} exceeds its maximum")
         cleaned[key] = value

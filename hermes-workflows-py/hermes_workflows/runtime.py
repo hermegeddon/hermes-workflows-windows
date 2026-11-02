@@ -41,6 +41,7 @@ class Runtime:
         self.specs = specs or SpecStore()
         self.engine = Engine(self.db, executor)
         self.home = self.db.path.parent.parent.resolve()
+        self.memory = self.engine.memory_policy
         self.engine.executor.home = self.engine.executor.home or self.home
         self.origins = Origins(NativeHost(self.home))
         self.notifications = Notifications(self.db, self.home, NativeSender(self.origins))
@@ -105,6 +106,7 @@ class Runtime:
         self._ready.set()
         tasks = {}
         delivery_task = None
+        memory_task = None
         last_schedules = 0.0
         try:
             while not self._stop.is_set():
@@ -145,11 +147,21 @@ class Runtime:
                             except Exception:
                                 log.exception("notification dispatch failed")
                         delivery_task = asyncio.create_task(self.notifications.dispatch())
+                    if memory_task is None or memory_task.done():
+                        if memory_task is not None:
+                            try:
+                                memory_task.result()
+                            except Exception as exc:
+                                log.warning("memory dispatch unavailable (%s)", type(exc).__name__)
+                        memory_task = asyncio.create_task(self.memory.dispatch())
                 try:
                     await asyncio.wait_for(self._stop.wait(), timeout=0.1)
                 except TimeoutError:
                     pass
         finally:
+            if memory_task:
+                memory_task.cancel()
+                await asyncio.gather(memory_task, return_exceptions=True)
             if delivery_task:
                 delivery_task.cancel()
                 await asyncio.gather(delivery_task, return_exceptions=True)
@@ -222,7 +234,7 @@ class Runtime:
             if claimed:
                 try:
                     detail = self.specs.get(row["workflow_id"])
-                    self.engine.start(detail["workflow"], workflow_path=detail["path"])
+                    self.engine.start(detail["workflow"], workflow_path=detail["path"], scheduled=True)
                 except ConflictError:
                     log.info("scheduled run skipped while disabled or busy: %s", row["workflow_id"])
                 except Exception:
