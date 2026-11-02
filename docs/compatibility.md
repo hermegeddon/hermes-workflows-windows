@@ -61,7 +61,7 @@ Local implementation evidence is in
 | OpenSecondBrain | Partial presence/config badge only; no actual status probe, write policy, event writes or retrospectives | `api.py` `/o2b-status`; U7; hwp-6pu.11 |
 | Telemetry and dangerous-command approvals | Live direct/native worker hooks, per-card stream replacement, adopted-card aggregation and persisted attempt snapshots implemented. Direct dashboard prompts require opt-in; native finite-job policies remain host-owned and prompts without an explicitly selected supported transport remain read-only | `telemetry.py`, `observer.py`, worker callbacks, API and web/Desktop controls; pinned reference, cross-process and installed-native capture tests. Windows web/Desktop decisions and final native completion counters passed; U8; hwp-6pu.12 |
 | Traces and log export | Redacted JSONL lifecycle, notification marker, worker and approval events with attempt/revision extensions implemented; canonical rows are transactional SQLite rather than separate worker trace files. Exports include attempt history | Schema 4, `trace.py`, `redact.py`, `test_telemetry.py`, reference fixtures and delivery trace tests; live redaction, history equality, cancellation and stale-decision rejection passed; U8; hwp-6pu.12 |
-| Portable template export | Partial cached snapshot plus generic adaptation guide; structured de-binding, placeholder inventory and composite provenance/model cache are missing | `api.py` export-template; U9; hwp-6pu.13 |
+| Portable template export | Offline structured de-binding, typed-param preservation, skill/branch/prose inventory, versioned provenance and composite model-aware cache implemented. CLI materializes both artifacts with optional bounded tool-free model advice; web/Desktop remain offline | `template_export.py`, pinned Node-captured de-binding/inventory fixtures, cross-process/scoped provider stub and round-trip tests; Windows web/Desktop export/cache/adapted-import acceptance passed; U9; hwp-6pu.13 |
 | Settings | Complete pinned schema with honest enforcement flags; scoped partial config writes and config/legacy SQLite/env/default precedence. Existing Python defaults preserved; default_mode controls resident batch checkpoints; unenforced memory/path/tick knobs are labelled | `settings.py`, pinned settings reference, concurrent-writer/read-only/profile tests and installed-native config checks; Windows web/Desktop settings upgrade passed; new mode live acceptance pending; U10; hwp-6pu.14/.15 |
 | Compile preview, API and command compatibility | Plans report actual executor/mode and inherited model/retries. Resume, NL workflow selection, CLI project/params/origin aliases and scoped maintenance advances implemented; existing JSON slash envelopes and retry semantics retained. Template-export CLI parity belongs to the template milestone | `specs.compile_preview`, `api.py`, `cli.py`, `commands.py`, `command-reference.json`; U10; hwp-6pu.5/.6/.7/.13/.14/.15; new controls live acceptance pending |
 | Web and native Desktop integration | Implemented and live-tested on Windows default/named profiles and remote macOS review workflows | `frontend/src/desktop`, SDK owner/stale-request tests; each feature must include relevant UI coverage, final gate hwp-6pu.16 |
@@ -650,6 +650,46 @@ real SQLite writes and reports node/attempt/lease/driver diagnostics on timeout.
 The delayed probe passes beyond the old budget; removing the engine cap in a
 negative control still fails. This test-only correction (**hwp-6pu.41**) does
 not change production timing or resolve the broader host-latency gate.
+
+Portable template export (**hwp-6pu.13**) now produces an offline de-bound spec
+and adaptation guide, preserves typed parameters and runtime references, and
+records source/generator/format/model provenance. The cache identifies all four
+version axes and the model, excludes UI-only changes and preserves prior legacy
+exports. Concurrent writers converge on the first complete persisted bundle;
+CLI retries repair missing artifacts without changing equal files. Windows
+drive/UNC paths, skills, branches and prose remain available for manual review.
+The CLI alone can opt in to one bounded, tool-free hints call; web/Desktop stay
+offline. Provider errors or malformed advice fall back to the offline guide.
+JSON syntax is used as a YAML subset for stdlib-only round trips; its canonical
+hash intentionally differs from upstream's canonical YAML hash. Pinned Node
+captures compare de-binding, inventory and hint-request decisions, rather than
+claiming identical serialized hashes.
+
+The final backend suites pass 247 tests on Python 3.11 and managed 3.14 (one and
+four optional dependency skips). Installed-native router/export/adapted-import
+checks, reference regeneration, lint and eight asset hashes pass. The frontend
+suite passes 347 tests, with the updated template-download test also passing a
+focused rerun and typecheck/build. Live web acceptance exports both artifacts,
+reuses the cached revision and imports an adapted disabled workflow; source,
+QA/default history, configuration, environment and settings fingerprints remain
+unchanged. Native pointer testing found and fixed a disabled-row opacity stacking
+context that put menus beneath later rows (**hwp-iu6**). Explicit per-artifact
+download buttons also recover the guide when a browser blocks the second
+automatic download, without changing browser permissions.
+
+Final Desktop acceptance passed after the user restarted the gateway and
+Desktop: export reported the same cached revision, both saved artifacts matched
+the web bundle byte-for-byte, and an adapted disabled workflow imported with its
+typed parameters intact. All three disabled fixtures and their own portable and
+legacy export-cache rows were removed with ID/path/hash/no-run guards. Original
+QA/default run and attempt history, configuration, QA environment/settings and
+export-cache fingerprints matched the pre-test baseline exactly. No model calls
+or workflow runs were created. Desktop initially used the legacy cached ASGI
+router even after profile plugin reload; refreshing the identity-verified idle
+QA child hit the host's 30-second REST connection timeout twice. The restart
+resolved this acceptance blocker. The broader host findings remain tracked in
+**hwp-6pu.34**; no production deadline was raised. Evidence is under
+`.cache/release-checks/templates-*` and `.cache/dashboard-check/templates-live/`.
 
 The final parity gate **hwp-6pu.16** requires reference fixtures for every partial
 or missing contract, upgrade/clean-install tests and Windows plus remote owner

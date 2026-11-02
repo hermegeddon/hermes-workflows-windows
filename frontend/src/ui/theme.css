@@ -268,8 +268,9 @@
   color: var(--color-midground, #9a9a9a);
 }
 
-/* A disabled workflow row reads dimmer than the active ones. */
-.hw-row--disabled {
+/* Dim data cells without trapping the action menu under later rows in an
+ * opacity stacking context. Disabled workflows still support export/edit. */
+.hw-row--disabled > td:not(:last-child) {
   opacity: 0.6;
 }
 

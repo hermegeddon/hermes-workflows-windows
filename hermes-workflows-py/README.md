@@ -169,6 +169,49 @@ persistent host or sidecar.
 & $Python -m hermes_workflows retry RUN_ID --node-id hello
 ```
 
+## Portable templates
+
+**Export as template** in web or Desktop downloads a `.template.yaml` spec and
+an adaptation guide. The spec uses JSON syntax (valid YAML), so export and import
+work with the standard library. Explicit spec/guide download buttons remain
+available if the browser blocks the second automatic download. Structured projects, profiles, models, delivery
+targets, working directories and literal adopted-card IDs become `${...}`
+placeholders. Skills, branches and prompt/command text remain intact and are
+listed for manual adaptation; Windows drive/UNC paths are included in the
+reference inventory. Existing `{{nodes...}}` and `{{params...}}` references stay
+unchanged.
+
+```powershell
+& $Python -m hermes_workflows export WORKFLOW_ID --as-template --out-dir '.\templates'
+```
+
+Copy the spec, remove its `template` provenance block, choose a new ID, replace
+the placeholders, and review parameter defaults and the guide's prerequisites.
+Import the adapted file with `hermes-workflows import <file>`. For web/Desktop
+JSON import, save it as `{ "workflow": { ...adapted spec... } }` in a
+`.workflow.json` file. A template requires adaptation before execution.
+
+Export is offline by default and starts no workers or schedules. The cache is
+keyed on workflow ID, canonical content hash, artifact format, generator version
+and hints model; UI movement/key ordering do not invalidate it. A cache hit
+retains the original generation timestamp and both artifact bytes. Repeating a
+CLI export leaves unchanged files untouched and repairs missing artifacts.
+Python content hashes use canonical JSON; upstream uses its canonical YAML
+emitter. These provenance hashes and cache keys are distribution-specific.
+
+Optional adaptation advice requires an explicit CLI opt-in:
+
+```powershell
+& $Python -m hermes_workflows export WORKFLOW_ID --as-template --with-hints `
+  --model 'MODEL@PROVIDER' --hint-timeout 60
+```
+
+Omit `--model` to use the selected profile's configured model. The Python worker
+performs one tool-free completion, with a maximum 120-second process budget.
+Unavailable providers, timeouts and malformed advice fall back to the offline
+guide; the resulting bundle is cached. Web/Desktop export never enables model
+calls. Existing `export RUN_ID` still exports run logs.
+
 ## Storage and execution
 
 Paths use `pathlib.Path`. The default database is `Path.home() / '.hermes' /

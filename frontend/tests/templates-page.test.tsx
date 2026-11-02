@@ -386,6 +386,17 @@ describe("TemplatesPage â€” row lifecycle actions", () => {
     await waitFor(() => expect(exportTemplate).toHaveBeenCalledWith("deploy"));
     // One object URL per downloaded artifact: the spec and the guide.
     expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
+    // Browsers may block the second automatic download. Each artifact remains
+    // available through its own gesture without another export/provider call.
+    const group = screen.getByRole("group", { name: "Template downloads for deploy" });
+    expect(group).toBeInTheDocument();
+    vi.mocked(URL.createObjectURL).mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "Download adaptation guide" }));
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(await blobText(vi.mocked(URL.createObjectURL).mock.calls[0]![0] as Blob)).toBe("# guide\n");
+    await userEvent.click(screen.getByRole("button", { name: "Download template spec" }));
+    expect(await blobText(vi.mocked(URL.createObjectURL).mock.calls[1]![0] as Blob)).toBe("id: deploy\n");
+    expect(exportTemplate).toHaveBeenCalledTimes(1);
   });
 
   it("exports a workflow as a JSON download of the authoring shape", async () => {

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import re
 import shutil
@@ -214,40 +213,9 @@ class API:
                     "yaml": Path(detail["path"]).read_text(encoding="utf-8-sig"),
                 }
             if action == "export-template" and method == "GET":
-                text = (
-                    json.dumps(
-                        {**wf, **({"ui": detail["ui"]} if "ui" in detail else {})},
-                        ensure_ascii=False,
-                        indent=2,
-                    )
-                    + "\n"
-                )
-                sha = hashlib.sha256(text.encode()).hexdigest()
-                cache_key = "offline-template-v1:" + sha
-                cached = db.export_cache(cache_key)
-                if cached:
-                    return {**cached, "cached": True}
-                # Deterministic, offline adaptation guide; never sends a spec to
-                # a model or silently rewrites paths into unusable placeholders.
-                guide = f"# {wf['name']}\n\nReview profiles, models, skills, working directories and shell commands before importing on another computer.\n\n"
-                guide += (
-                    "Parameters: "
-                    + (", ".join(p["name"] for p in wf.get("params", [])) or "none")
-                    + "\n"
-                )
-                result = {
-                    "id": workflow_id,
-                    "cached": False,
-                    "revision": sha[:12],
-                    "human_version": str(wf["version"]),
-                    "spec_sha": sha,
-                    "yaml_filename": workflow_id + ".template.yaml",
-                    "yaml": text,
-                    "md_filename": workflow_id + ".template.md",
-                    "md": guide,
-                }
-                db.export_cache(cache_key, result)
-                return result
+                from .template_export import export
+
+                return export(wf, db)
         if path == "/runs" and method == "GET":
             scope = query.get("scope", ["active"])[0]
             if scope not in ("active", "all"):

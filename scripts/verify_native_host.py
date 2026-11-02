@@ -145,6 +145,35 @@ def host_contract(plugin: Path) -> dict:
                         await client.get(base + "/runs/" + run_id + "/export")
                     ).status_code == 200
                     assert (await client.get(base + "/settings")).status_code == 200
+                    portable = {
+                        **wf, "id": "native-template", "name": "Native portable template",
+                        "defaults": {"profile": "source-worker", "model": "source-model@provider"},
+                        "nodes": [{"id": "work", "type": "agent_task", "prompt": "Plan the change.",
+                                   "workdir": str(home / "source workspace"), "skills": ["required-skill"]},
+                                  {"id": "done", "type": "finish"}],
+                        "edges": [{"from": "work", "to": "done"}],
+                    }
+                    response = await client.post(base + "/workflows", json={"workflow": portable})
+                    assert response.status_code == 200, response.text
+                    response = await client.get(base + "/workflows/native-template/export-template")
+                    assert response.status_code == 200, response.text
+                    bundle = response.json()
+                    assert not bundle["cached"] and bundle["version"]["template_format"] == 1
+                    document = json.loads(bundle["yaml"])
+                    assert document["defaults"]["profile"].startswith("${PROFILE:")
+                    assert document["nodes"][0]["workdir"] == "${WORKDIR}"
+                    assert "source-model" not in bundle["yaml"]
+                    assert "required-skill" in bundle["md"] and "Prerequisites" in bundle["md"]
+                    assert (await client.get(base + "/workflows/native-template/export-template")).json() == {
+                        **bundle, "cached": True,
+                    }
+                    document.pop("template")
+                    document["id"] = "native-adapted-template"
+                    document["defaults"] = {"profile": "target-worker", "model": "target-model"}
+                    document["nodes"][0]["workdir"] = str(home / "target workspace")
+                    response = await client.post(base + "/workflows", json={"workflow": document})
+                    assert response.status_code == 200, response.text
+                    assert not (await client.get(base + "/runs?scope=all&workflow_id=native-template")).json()["runs"]
                     response = await client.get(base + "/runs/" + run_id + "/attempts")
                     assert response.status_code == 200 and response.json()["attempts"], (
                         response.text
@@ -342,6 +371,7 @@ def host_contract(plugin: Path) -> dict:
                 "dashboard_run_review": "passed",
                 "dashboard_loop_review": "passed",
                 "dashboard_resume_and_mode": "passed",
+                "dashboard_portable_template": "passed",
                 "dashboard_worker_observation_routes": "passed",
             }
         finally:

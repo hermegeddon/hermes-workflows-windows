@@ -75,6 +75,12 @@ def main(argv=None):
         p.add_argument("run_id")
         if name == "retry":
             p.add_argument("--node-id")
+        if name == "export":
+            p.add_argument("--as-template", action="store_true", help="export a workflow template instead of run logs")
+            p.add_argument("--out-dir", type=Path)
+            p.add_argument("--with-hints", action="store_true", help="opt in to one bounded model call for adaptation advice")
+            p.add_argument("--model", help="model[@provider] for optional advice")
+            p.add_argument("--hint-timeout", type=float, default=120)
     review = commands.add_parser("review")
     review.add_argument("run_id")
     review.add_argument("node_id")
@@ -87,6 +93,10 @@ def main(argv=None):
     target.add_argument("--node", "--node-id", dest="node")
     target.add_argument("--all", action="store_true")
     args = parser.parse_args(argv)
+    if args.command == "export" and not args.as_template and (
+        args.out_dir or args.with_hints or args.model or args.hint_timeout != 120
+    ):
+        parser.error("template options require --as-template")
     logging.basicConfig(level=logging.INFO)
     runtime = None
     try:
@@ -105,6 +115,16 @@ def main(argv=None):
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 1 if result.get("status") == "failed" else 0
+        if args.command == "export" and args.as_template:
+            from .template_export import export, write_bundle
+
+            runtime = Runtime()  # Export never starts workers or the scheduler.
+            workflow = runtime.specs.get(args.run_id)["workflow"]
+            result = export(workflow, runtime.db, with_hints=args.with_hints, model=args.model,
+                            hint_timeout=args.hint_timeout)
+            directory = args.out_dir or runtime.home / "workflows" / "template-exports"
+            print(json.dumps(write_bundle(result, directory), ensure_ascii=False, indent=2))
+            return 0
         runtime = get_runtime()
         api = API(runtime, origin=getattr(args, "origin", None))
         if args.command == "serve":
@@ -191,7 +211,7 @@ def main(argv=None):
         return 1 if status >= 400 or result.get("status") == "failed" else 0
     except KeyboardInterrupt:
         return 130
-    except (ValueError, OSError, RuntimeError) as exc:
+    except (ValueError, KeyError, OSError, RuntimeError) as exc:
         parser.exit(1, f"{exc}\n")
     finally:
         if runtime:

@@ -460,6 +460,18 @@ class Database:
             ).fetchone()
         return json.loads(row[0]) if row else None
 
+    def export_cache_once(self, cache_key: str, value: dict) -> dict:
+        # Concurrent exports converge on the first complete persisted bundle;
+        # no write transaction is held while optional hints are generated.
+        with self.connect(write=True) as con:
+            inserted = con.execute(
+                "INSERT OR IGNORE INTO py_exports VALUES(?,?)", (cache_key, json.dumps(value))
+            ).rowcount
+            stored = json.loads(con.execute(
+                "SELECT content FROM py_exports WHERE cache_key=?", (cache_key,)
+            ).fetchone()[0])
+        return {**stored, "cached": not bool(inserted)}
+
     def save_settings(self, values: dict):
         with self.connect(write=True) as con:
             con.executemany(

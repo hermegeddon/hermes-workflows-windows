@@ -13,7 +13,7 @@ import {
 import { formatEpochSeconds, formatIso, orDash } from "../ui/format";
 import { BackendUnavailable, Badge, Button, Menu, PageHeader } from "../ui/components";
 import type { WorkflowsApi } from "../api/client";
-import type { Trigger, WorkflowListItem } from "../api/types";
+import type { ExportedTemplate, Trigger, WorkflowListItem } from "../api/types";
 import { ActionDialog } from "../ui/components/ActionDialog";
 
 export interface TemplatesPageProps {
@@ -63,6 +63,7 @@ export function TemplatesPage({
   const api = client ?? getApiClient();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [runMessage, setRunMessage] = useState<string | null>(null);
+  const [templateDownload, setTemplateDownload] = useState<ExportedTemplate | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [showNew, setShowNew] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -163,9 +164,11 @@ export function TemplatesPage({
   const handleExportTemplate = useCallback(
     (id: string) => {
       setRunMessage(`Building template for ${id}…`);
+      setTemplateDownload(null);
       api
         .exportTemplate(id)
         .then((bundle) => {
+          setTemplateDownload(bundle);
           // Two artifacts: the de-bound spec and its adaptation guide.
           downloadTextFile(bundle.yaml_filename, bundle.yaml);
           downloadTextFile(bundle.md_filename, bundle.md, "text/markdown");
@@ -283,6 +286,16 @@ export function TemplatesPage({
         <p role="status" className="hw-status">
           {runMessage}
         </p>
+      )}
+      {templateDownload !== null && (
+        <div className="hw-actions" role="group" aria-label={`Template downloads for ${templateDownload.id}`}>
+          <Button size="sm" onClick={() => downloadTextFile(templateDownload.yaml_filename, templateDownload.yaml)}>
+            Download template spec
+          </Button>
+          <Button size="sm" onClick={() => downloadTextFile(templateDownload.md_filename, templateDownload.md, "text/markdown")}>
+            Download adaptation guide
+          </Button>
+        </div>
       )}
       {showNew && (
         <NewWorkflowModal

@@ -10,7 +10,7 @@
     "manifest.json": "9778922694f0d7ebdc8846b09b44155d60c2dff0aca7308d2bacbfa3facf6b2a",
     "entry.js": "0989051ef0c8a23c54f1b382e34966e1a64e4728e21fbd7d9041dcd857b9e81f",
     "style.css": "5f6a7351766f94efb8ddf79809d8c3e59dffb8142ac353c1e1d72afbb41e1f57",
-    "compat/index.js": "843ad7b5f0bba486301baaa1b19d45341f5aab1970320776445f483d1dd3e10e",
-    "compat/index.css": "15ef73a9240fe01db5a2e178e6796de408f4f8ab627f1864ea0c8dc82d9c59e0"
+    "compat/index.js": "5eadc7bf45e288a2928f9579c55d1ac53ecd1f33ee23a34ed9ca33036433a253",
+    "compat/index.css": "62bbc3388011f6409994e8b762ba2bdef69afaa1a7e17f6929196eeb41c4c678"
   }
 }

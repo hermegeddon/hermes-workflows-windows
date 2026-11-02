@@ -1,0 +1,671 @@
+{
+  "upstream_commit": "352e5ffb751e4798e66dcdf1dbe9a80dff768c0f",
+  "source_sha256": {
+    "packages/core/src/templates/exportTemplate.ts": "f2b3d4c2d53a45fbc586aae0128181be30684dfda3165f2a0f7b9a2f75e05b9d",
+    "packages/core/src/serialize/serializeWorkflow.ts": "b7fc3e1014443acea3fdd772d1a960b0bc10181b73fb3e816562ee7bca72ed70",
+    "packages/core/src/serialize/specSha.ts": "3d76a4627a5ae35b05cfde97981ca3e62bb3b93403c32711b519f4b74526c974"
+  },
+  "cases": [
+    {
+      "name": "offline",
+      "workflow": {
+        "id": "portable-qa",
+        "name": "Portable QA",
+        "version": 3,
+        "scope": {
+          "type": "projects",
+          "projects": [
+            "widgets",
+            "other",
+            "widgets"
+          ]
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "native-worker",
+          "model": "source-model@source-provider"
+        },
+        "deliver": "discord:123:456",
+        "params": [
+          {
+            "name": "count",
+            "type": "int",
+            "default": 3
+          },
+          {
+            "name": "enabled",
+            "type": "bool",
+            "default": false
+          }
+        ],
+        "nodes": [
+          {
+            "id": "plan",
+            "type": "agent_task",
+            "title": "Plan feature",
+            "profile": "planner",
+            "model": "reasoner@provider",
+            "skills": [
+              "architecture"
+            ],
+            "prompt": "Clone github.com/acme/widgets under /srv/projects/widgets. Run `hermes kanban complete t_x`. Notify telegram:-1009999:7."
+          },
+          {
+            "id": "implement",
+            "type": "agent_task",
+            "profile": "engineer",
+            "prompt": "Build widgets.",
+            "adopt": true,
+            "task_ref": "t_abc12345",
+            "workdir": "/srv/projects/widgets",
+            "stack": true,
+            "branch": "feature/widgets"
+          },
+          {
+            "id": "follow",
+            "type": "agent_task",
+            "prompt": "Follow up.",
+            "adopt": true,
+            "task_ref": "{{nodes.plan.output.task_ids}}"
+          },
+          {
+            "id": "done",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "plan",
+            "to": "implement"
+          },
+          {
+            "from": "implement",
+            "to": "follow"
+          },
+          {
+            "from": "follow",
+            "to": "done"
+          }
+        ]
+      },
+      "hints": null,
+      "expected": {
+        "debound": {
+          "workflow": {
+            "id": "portable-qa",
+            "name": "Portable QA",
+            "version": 3,
+            "scope": {
+              "type": "projects",
+              "projects": [
+                "${PROJECT}",
+                "${PROJECT_2}",
+                "${PROJECT}"
+              ]
+            },
+            "trigger": {
+              "type": "manual"
+            },
+            "defaults": {
+              "profile": "${PROFILE:the workflow's default worker role}",
+              "model": "${MODEL:the workflow's default model capability}"
+            },
+            "deliver": "${DELIVER_TARGET}",
+            "params": [
+              {
+                "name": "count",
+                "type": "int",
+                "default": 3
+              },
+              {
+                "name": "enabled",
+                "type": "bool",
+                "default": false
+              }
+            ],
+            "nodes": [
+              {
+                "id": "plan",
+                "type": "agent_task",
+                "title": "Plan feature",
+                "profile": "${PROFILE:a worker suited to \"Plan feature\"}",
+                "model": "${MODEL:a model capable of \"Plan feature\"}",
+                "skills": [
+                  "architecture"
+                ],
+                "prompt": "Clone github.com/acme/widgets under /srv/projects/widgets. Run `hermes kanban complete t_x`. Notify telegram:-1009999:7."
+              },
+              {
+                "id": "implement",
+                "type": "agent_task",
+                "profile": "${PROFILE:a worker suited to \"implement\"}",
+                "prompt": "Build widgets.",
+                "adopt": true,
+                "task_ref": "${TASK_REF}",
+                "workdir": "${WORKDIR}",
+                "stack": true,
+                "branch": "feature/widgets"
+              },
+              {
+                "id": "follow",
+                "type": "agent_task",
+                "prompt": "Follow up.",
+                "adopt": true,
+                "task_ref": "{{nodes.plan.output.task_ids}}"
+              },
+              {
+                "id": "done",
+                "type": "finish"
+              }
+            ],
+            "edges": [
+              {
+                "from": "plan",
+                "to": "implement"
+              },
+              {
+                "from": "implement",
+                "to": "follow"
+              },
+              {
+                "from": "follow",
+                "to": "done"
+              }
+            ]
+          },
+          "placeholders": [
+            {
+              "token": "${PROJECT}",
+              "kind": "project",
+              "field": "scope.projects",
+              "original": "widgets"
+            },
+            {
+              "token": "${PROJECT_2}",
+              "kind": "project",
+              "field": "scope.projects",
+              "original": "other"
+            },
+            {
+              "token": "${PROFILE:the workflow's default worker role}",
+              "kind": "profile",
+              "hint": "the workflow's default worker role",
+              "field": "defaults.profile",
+              "original": "native-worker"
+            },
+            {
+              "token": "${MODEL:the workflow's default model capability}",
+              "kind": "model",
+              "hint": "the workflow's default model capability",
+              "field": "defaults.model",
+              "original": "source-model@source-provider"
+            },
+            {
+              "token": "${DELIVER_TARGET}",
+              "kind": "deliver",
+              "field": "deliver",
+              "original": "discord:123:456"
+            },
+            {
+              "token": "${PROFILE:a worker suited to \"Plan feature\"}",
+              "kind": "profile",
+              "hint": "a worker suited to \"Plan feature\"",
+              "nodeId": "plan",
+              "field": "node.profile",
+              "original": "planner"
+            },
+            {
+              "token": "${MODEL:a model capable of \"Plan feature\"}",
+              "kind": "model",
+              "hint": "a model capable of \"Plan feature\"",
+              "nodeId": "plan",
+              "field": "node.model",
+              "original": "reasoner@provider"
+            },
+            {
+              "token": "${PROFILE:a worker suited to \"implement\"}",
+              "kind": "profile",
+              "hint": "a worker suited to \"implement\"",
+              "nodeId": "implement",
+              "field": "node.profile",
+              "original": "engineer"
+            },
+            {
+              "token": "${WORKDIR}",
+              "kind": "workdir",
+              "nodeId": "implement",
+              "field": "node.workdir",
+              "original": "/srv/projects/widgets"
+            },
+            {
+              "token": "${TASK_REF}",
+              "kind": "task_ref",
+              "nodeId": "implement",
+              "field": "node.task_ref",
+              "original": "t_abc12345"
+            }
+          ]
+        },
+        "inventory": [
+          {
+            "nodeId": "plan",
+            "field": "prompt",
+            "kind": "kanban_wrapper",
+            "match": "hermes kanban complete t_x",
+            "note": "the kanban wrapper invocation"
+          },
+          {
+            "nodeId": "plan",
+            "field": "prompt",
+            "kind": "repo",
+            "match": "github.com/acme/widgets"
+          },
+          {
+            "nodeId": "plan",
+            "field": "prompt",
+            "kind": "channel",
+            "match": "telegram:-1009999:7."
+          },
+          {
+            "nodeId": "plan",
+            "field": "prompt",
+            "kind": "path",
+            "match": "/srv/projects/widgets."
+          },
+          {
+            "nodeId": "plan",
+            "field": "prompt",
+            "kind": "project_name",
+            "match": "widgets",
+            "note": "the source project name"
+          },
+          {
+            "nodeId": "plan",
+            "field": "skills",
+            "kind": "skill",
+            "match": "architecture",
+            "note": "verify this skill exists on the target installation"
+          },
+          {
+            "nodeId": "implement",
+            "field": "prompt",
+            "kind": "project_name",
+            "match": "widgets",
+            "note": "the source project name"
+          },
+          {
+            "nodeId": "implement",
+            "field": "branch",
+            "kind": "branch",
+            "match": "feature/widgets",
+            "note": "the stacked feature branch name"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "plan",
+            "type": "agent_task",
+            "title": "Plan feature",
+            "prompt": "Clone github.com/acme/widgets under /srv/projects/widgets. Run `hermes kanban complete t_x`. Notify telegram:-1009999:7.",
+            "profile": "planner",
+            "model": "reasoner@provider"
+          },
+          {
+            "id": "implement",
+            "type": "agent_task",
+            "prompt": "Build widgets.",
+            "profile": "engineer"
+          },
+          {
+            "id": "follow",
+            "type": "agent_task",
+            "prompt": "Follow up."
+          },
+          {
+            "id": "done",
+            "type": "finish"
+          }
+        ]
+      }
+    },
+    {
+      "name": "hints",
+      "workflow": {
+        "id": "portable-qa",
+        "name": "Portable QA",
+        "version": 3,
+        "scope": {
+          "type": "projects",
+          "projects": [
+            "widgets",
+            "other",
+            "widgets"
+          ]
+        },
+        "trigger": {
+          "type": "manual"
+        },
+        "defaults": {
+          "profile": "native-worker",
+          "model": "source-model@source-provider"
+        },
+        "deliver": "discord:123:456",
+        "params": [
+          {
+            "name": "count",
+            "type": "int",
+            "default": 3
+          },
+          {
+            "name": "enabled",
+            "type": "bool",
+            "default": false
+          }
+        ],
+        "nodes": [
+          {
+            "id": "plan",
+            "type": "agent_task",
+            "title": "Plan feature",
+            "profile": "planner",
+            "model": "reasoner@provider",
+            "skills": [
+              "architecture"
+            ],
+            "prompt": "Clone github.com/acme/widgets under /srv/projects/widgets. Run `hermes kanban complete t_x`. Notify telegram:-1009999:7."
+          },
+          {
+            "id": "implement",
+            "type": "agent_task",
+            "profile": "engineer",
+            "prompt": "Build widgets.",
+            "adopt": true,
+            "task_ref": "t_abc12345",
+            "workdir": "/srv/projects/widgets",
+            "stack": true,
+            "branch": "feature/widgets"
+          },
+          {
+            "id": "follow",
+            "type": "agent_task",
+            "prompt": "Follow up.",
+            "adopt": true,
+            "task_ref": "{{nodes.plan.output.task_ids}}"
+          },
+          {
+            "id": "done",
+            "type": "finish"
+          }
+        ],
+        "edges": [
+          {
+            "from": "plan",
+            "to": "implement"
+          },
+          {
+            "from": "implement",
+            "to": "follow"
+          },
+          {
+            "from": "follow",
+            "to": "done"
+          }
+        ]
+      },
+      "hints": {
+        "overview": "Plan and build a feature.",
+        "nodes": [
+          {
+            "nodeId": "plan",
+            "role": "experienced planner",
+            "capability": "deep reasoning"
+          }
+        ]
+      },
+      "expected": {
+        "debound": {
+          "workflow": {
+            "id": "portable-qa",
+            "name": "Portable QA",
+            "version": 3,
+            "scope": {
+              "type": "projects",
+              "projects": [
+                "${PROJECT}",
+                "${PROJECT_2}",
+                "${PROJECT}"
+              ]
+            },
+            "trigger": {
+              "type": "manual"
+            },
+            "defaults": {
+              "profile": "${PROFILE:the workflow's default worker role}",
+              "model": "${MODEL:the workflow's default model capability}"
+            },
+            "deliver": "${DELIVER_TARGET}",
+            "params": [
+              {
+                "name": "count",
+                "type": "int",
+                "default": 3
+              },
+              {
+                "name": "enabled",
+                "type": "bool",
+                "default": false
+              }
+            ],
+            "nodes": [
+              {
+                "id": "plan",
+                "type": "agent_task",
+                "title": "Plan feature",
+                "profile": "${PROFILE:experienced planner}",
+                "model": "${MODEL:deep reasoning}",
+                "skills": [
+                  "architecture"
+                ],
+                "prompt": "Clone github.com/acme/widgets under /srv/projects/widgets. Run `hermes kanban complete t_x`. Notify telegram:-1009999:7."
+              },
+              {
+                "id": "implement",
+                "type": "agent_task",
+                "profile": "${PROFILE:a worker suited to \"implement\"}",
+                "prompt": "Build widgets.",
+                "adopt": true,
+                "task_ref": "${TASK_REF}",
+                "workdir": "${WORKDIR}",
+                "stack": true,
+                "branch": "feature/widgets"
+              },
+              {
+                "id": "follow",
+                "type": "agent_task",
+                "prompt": "Follow up.",
+                "adopt": true,
+                "task_ref": "{{nodes.plan.output.task_ids}}"
+              },
+              {
+                "id": "done",
+                "type": "finish"
+              }
+            ],
+            "edges": [
+              {
+                "from": "plan",
+                "to": "implement"
+              },
+              {
+                "from": "implement",
+                "to": "follow"
+              },
+              {
+                "from": "follow",
+                "to": "done"
+              }
+            ]
+          },
+          "placeholders": [
+            {
+              "token": "${PROJECT}",
+              "kind": "project",
+              "field": "scope.projects",
+              "original": "widgets"
+            },
+            {
+              "token": "${PROJECT_2}",
+              "kind": "project",
+              "field": "scope.projects",
+              "original": "other"
+            },
+            {
+              "token": "${PROFILE:the workflow's default worker role}",
+              "kind": "profile",
+              "hint": "the workflow's default worker role",
+              "field": "defaults.profile",
+              "original": "native-worker"
+            },
+            {
+              "token": "${MODEL:the workflow's default model capability}",
+              "kind": "model",
+              "hint": "the workflow's default model capability",
+              "field": "defaults.model",
+              "original": "source-model@source-provider"
+            },
+            {
+              "token": "${DELIVER_TARGET}",
+              "kind": "deliver",
+              "field": "deliver",
+              "original": "discord:123:456"
+            },
+            {
+              "token": "${PROFILE:experienced planner}",
+              "kind": "profile",
+              "hint": "experienced planner",
+              "nodeId": "plan",
+              "field": "node.profile",
+              "original": "planner"
+            },
+            {
+              "token": "${MODEL:deep reasoning}",
+              "kind": "model",
+              "hint": "deep reasoning",
+              "nodeId": "plan",
+              "field": "node.model",
+              "original": "reasoner@provider"
+            },
+            {
+              "token": "${PROFILE:a worker suited to \"implement\"}",
+              "kind": "profile",
+              "hint": "a worker suited to \"implement\"",
+              "nodeId": "implement",
+              "field": "node.profile",
+              "original": "engineer"
+            },
+            {
+              "token": "${WORKDIR}",
+              "kind": "workdir",
+              "nodeId": "implement",
+              "field": "node.workdir",
+              "original": "/srv/projects/widgets"
+            },
+            {
+              "token": "${TASK_REF}",
+              "kind": "task_ref",
+              "nodeId": "implement",
+              "field": "node.task_ref",
+              "original": "t_abc12345"
+            }
+          ]
+        },
+        "inventory": [
+          {
+            "nodeId": "plan",
+            "field": "prompt",
+            "kind": "kanban_wrapper",
+            "match": "hermes kanban complete t_x",
+            "note": "the kanban wrapper invocation"
+          },
+          {
+            "nodeId": "plan",
+            "field": "prompt",
+            "kind": "repo",
+            "match": "github.com/acme/widgets"
+          },
+          {
+            "nodeId": "plan",
+            "field": "prompt",
+            "kind": "channel",
+            "match": "telegram:-1009999:7."
+          },
+          {
+            "nodeId": "plan",
+            "field": "prompt",
+            "kind": "path",
+            "match": "/srv/projects/widgets."
+          },
+          {
+            "nodeId": "plan",
+            "field": "prompt",
+            "kind": "project_name",
+            "match": "widgets",
+            "note": "the source project name"
+          },
+          {
+            "nodeId": "plan",
+            "field": "skills",
+            "kind": "skill",
+            "match": "architecture",
+            "note": "verify this skill exists on the target installation"
+          },
+          {
+            "nodeId": "implement",
+            "field": "prompt",
+            "kind": "project_name",
+            "match": "widgets",
+            "note": "the source project name"
+          },
+          {
+            "nodeId": "implement",
+            "field": "branch",
+            "kind": "branch",
+            "match": "feature/widgets",
+            "note": "the stacked feature branch name"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "plan",
+            "type": "agent_task",
+            "title": "Plan feature",
+            "prompt": "Clone github.com/acme/widgets under /srv/projects/widgets. Run `hermes kanban complete t_x`. Notify telegram:-1009999:7.",
+            "profile": "planner",
+            "model": "reasoner@provider"
+          },
+          {
+            "id": "implement",
+            "type": "agent_task",
+            "prompt": "Build widgets.",
+            "profile": "engineer"
+          },
+          {
+            "id": "follow",
+            "type": "agent_task",
+            "prompt": "Follow up."
+          },
+          {
+            "id": "done",
+            "type": "finish"
+          }
+        ]
+      }
+    }
+  ],
+  "cache": {
+    "key": "portable-qa|sha256:fixture|fmt1|gen1|model:hint-model@provider",
+    "revision": "289134ee"
+  }
+}
