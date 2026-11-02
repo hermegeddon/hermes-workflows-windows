@@ -408,6 +408,31 @@ the surviving parent/grandchild fail the process-handle assertion. The complete
 `cancel-before*.log`, `cancel-slow*.log`, `cancel-negative*.log` and
 `cancel-module*.log` under `.cache/release-checks/`.
 
+### Concurrent approval publication is separate from approval expiry
+
+CI `41486780145` exposed a three-second publication/lifetime window in the
+concurrent-approval projection fixture on Linux/Python 3.14 (`.34.15`). The old
+failure did not report whether publication was late, a prompt expired, or an
+admission failed closed under writer contention; it does not establish a
+production approval-policy bug.
+
+That fixture now publishes the first prompt before submitting the second, while
+keeping both outstanding together and requiring the third read-only card's
+projection to remain present. Its two approval lifetimes are 30 seconds and
+publication waits are bounded at 15 seconds. It also waits for each decision to
+be consumed before settling the next, preserving overlapping prompt coverage
+without testing SQLite's short writer-admission budget accidentally. The shared
+helper still defaults to three seconds and now reports the last safe approval
+states on failure. Dedicated expiry, cancellation and fail-closed tests, as well
+as all production deadlines, are unchanged.
+
+A controlled 3.5-second delay before each publication reproduces the old failure
+on both runtimes; the corrected fixture passes with both prompts outstanding.
+A negative control that publishes no approval is rejected. All 16 telemetry tests
+pass on both runtimes, including the original expiry/security cases. Evidence:
+`approval-before*.log`, `approval-slow*.log`, `approval-negative*.log` and
+`approval-module*.log` under `.cache/release-checks/`.
+
 ## Repeating the synthetic diagnostic
 
 From the repository root, using the desired Python interpreter:

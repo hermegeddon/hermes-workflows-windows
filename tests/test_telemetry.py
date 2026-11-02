@@ -76,15 +76,20 @@ class TelemetryTests(unittest.TestCase):
     def recorder(self, **changes):
         return NodeTelemetryRecorder(self.store, {**self.context, **changes})
 
-    def pending(self, count=1):
-        deadline = time.monotonic() + 3
+    def pending(self, count=1, timeout=3):
+        started = time.monotonic()
+        deadline = started + timeout
+        result = []
         while time.monotonic() < deadline:
             result = self.store.aggregate(self.att).get("approvals", [])
             pending = [a for a in result if a.get("can_respond")]
             if len(pending) == count:
                 return pending
             time.sleep(0.01)
-        self.fail("approval was not published")
+        visible = [{k: a.get(k) for k in ("command", "state", "choice", "can_respond")}
+                   for a in result]
+        self.fail(f"approval was not published: expected={count}, "
+                  f"elapsed={time.monotonic()-started:.3f}s, approvals={visible}")
 
     def decide(self, request, choice="once", **changes):
         body = dict(node_id="work", attempt_id=self.att, choice=choice)
@@ -203,13 +208,22 @@ class TelemetryTests(unittest.TestCase):
         other = self.recorder(stream_key="card-2")
         other.record("approval_request", command="native only", surface="gateway")
         with concurrent.futures.ThreadPoolExecutor() as pool:
-            one = pool.submit(recorder.approval, "first", "confirm", timeout=3)
-            two = pool.submit(recorder.approval, "second", "confirm", timeout=3)
-            requests = self.pending(2)
+            # Publish each admission before starting the next. Both prompts
+            # remain outstanding, without racing SQLite's fail-closed writer
+            # budget or a three-second prompt lifetime against a loaded runner.
+            one = pool.submit(recorder.approval, "first", "confirm", timeout=30)
+            self.pending(timeout=15)
+            two = pool.submit(recorder.approval, "second", "confirm", timeout=30)
+            requests = self.pending(2, timeout=15)
             self.assertEqual(len(self.store.aggregate(self.att)["approvals"]), 3)
+            answers = {"first": one, "second": two}
             for request in requests:
                 self.assertEqual(self.decide(request, "deny")[0], 200)
-            self.assertEqual([one.result(3), two.result(3)], ["deny", "deny"])
+                self.assertEqual(answers[request["command"]].result(10), "deny")
+            self.assertEqual([one.result(10), two.result(10)], ["deny", "deny"])
+            readonly = next(a for a in self.store.aggregate(self.att)["approvals"]
+                            if a.get("command") == "native only")
+            self.assertFalse(readonly["can_respond"])
 
     def test_timeout_cancel_and_missing_store_fail_closed(self):
         recorder = self.recorder()
